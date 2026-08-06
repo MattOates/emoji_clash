@@ -42,11 +42,11 @@ build: node_modules ## Build dist/index.html
 	@echo "built $$(du -h dist/index.html | cut -f1) -> dist/index.html"
 
 .PHONY: pages
-pages: build ## Copy the build into docs/ for GitHub Pages
+pages: build ## Preview the Pages site locally (CI builds the real one)
 	@mkdir -p docs/play
 	cp dist/index.html docs/play/index.html
 	@test -f dist/music.mp3 && cp dist/music.mp3 docs/play/music.mp3 || true
-	@echo "docs/play/index.html updated — commit and push to publish"
+	@echo "preview at docs/index.html — publishing is done by CI on push to main"
 
 .PHONY: deploy
 deploy: build ## Build, then publish to your own server

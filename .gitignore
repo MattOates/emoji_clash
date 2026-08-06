@@ -8,3 +8,5 @@ public/*.mp3
 .envrc
 .direnv/
 docs/play/music.mp3
+docs/play/
+_site/

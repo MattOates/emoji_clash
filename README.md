@@ -12,7 +12,7 @@ static HTML file.
 make install
 make dev         # http://localhost:5173
 make build       # -> dist/index.html, a single self-contained file
-make pages       # copy that build into docs/ for GitHub Pages
+make pages       # preview the Pages site locally
 make deploy      # scp it to a server of your own
 ```
 
@@ -252,10 +252,14 @@ src/main.ts         menu, input, HUD, frame loop
 
 ## GitHub Pages
 
-`make pages` copies the current build into `docs/play/`. With Pages set to serve
-from `main` → `/docs`, `docs/index.html` is the landing page and `docs/play/` is
-the playable build. The soundtrack is never committed, so the published copy is
-silent unless you add one yourself.
+Publishing is done by CI, not by committing a build. `.github/workflows/pages.yml`
+typechecks, builds and deploys on every push to `main`, assembling
+`docs/index.html` as the landing page and the freshly built game at `/play/`.
+Set **Settings → Pages → Source** to **GitHub Actions**.
+
+Nothing built is committed, so what is published can never drift from source.
+`make pages` produces the same layout locally for previewing. The soundtrack is
+never committed, so the published copy is silent unless you add one yourself.
 
 ## Licence
 

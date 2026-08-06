@@ -1,0 +1,21 @@
+# Typecheck and build every push and pull request, so a broken build is caught
+# before it reaches the Pages deployment.
+name: CI
+
+on:
+  push:
+    branches-ignore: [main] # main is covered by the Pages workflow
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - run: npm run build
