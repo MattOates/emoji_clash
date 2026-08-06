@@ -35,6 +35,7 @@ export const BLAST_RADIUS = 78; // world pixels
 export const BLAST_DAMAGE = 70;
 
 /** A fouled tile is this percentage of normal speed to cross. */
+export const RECYCLE_PCT = 60; // fraction of cost handed back when recycling
 export const MUCK_SLOW = 42;
 export const MUCK_COST = 22; // extra Dijkstra cost, so routes prefer to go around
 export const DUNG_COOLDOWN = 160; // ticks a Monkey needs between droppings
@@ -220,6 +221,7 @@ export type Command =
   | { c: "cancel"; ids: number[] }
   | { c: "detonate"; ids: number[] }
   | { c: "dung"; ids: number[]; x: number; y: number }
+  | { c: "recycle"; ids: number[] }
   | { c: "stop"; ids: number[] };
 
 export interface Player {

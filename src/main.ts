@@ -3,6 +3,7 @@ import {
   affordable, costText, type Command, type Entity, type Kind,
 } from "./game/types";
 import { canTrain, siteClear, trainableAt, ENROLL_SLOP, type World } from "./game/sim";
+import { RECYCLE_PCT } from "./game/types";
 import { createRunner, type Mode, type Runner } from "./lockstep";
 import { createGuest, createHost, type Net } from "./net";
 import { COLORS, Renderer, emojiFor, type Camera } from "./render";
@@ -378,7 +379,7 @@ window.addEventListener("keydown", (ev) => {
     toast(renderer.showTrails ? "Pheromone trails shown." : "Pheromone trails hidden.");
     return;
   }
-  if (ev.key === "F1") { ev.preventDefault(); toast("LMB drag · RMB order · A attack-move · D drive · Y gallery · K keyboard · C cloud · X feed · B datacenter · E/F/N/G/W/V train · P foul ground · T trails · Ctrl+A all · Ctrl+1-9 group · Space home"); return; }
+  if (ev.key === "F1") { ev.preventDefault(); toast("LMB drag · RMB order · A attack-move · D drive · Y gallery · K keyboard · C cloud · X feed · B datacenter · E/F/N/G/W/V train · R recycle · P foul ground · T trails · Ctrl+A all · Ctrl+1-9 group · Space home"); return; }
   if (k === " ") {
     const home = runner.world.entities.find((e) => e.owner === runner!.me && e.kind === "datacenter");
     if (home) centerOn(home.x / FP, home.y / FP);
@@ -436,6 +437,16 @@ window.addEventListener("keydown", (ev) => {
     return;
   }
 
+  if (k === "r") {
+    const owned = selected().filter((e) => STATS[e.kind].building && e.owner === runner!.me && e.kind !== "dung");
+    if (owned.length) {
+      issue({ c: "recycle", ids: owned.map((e) => e.id) });
+      toast(`Recycling ${owned.length} — ${RECYCLE_PCT}% refunded.`);
+      selection.clear();
+      syncCard();
+      return;
+    }
+  }
   if (k === "p" && selectedUnits().some((e) => e.kind === "monkey")) {
     dungArmed = !dungArmed; attackMoveArmed = false; placing = null; return;
   }
@@ -452,9 +463,9 @@ function tryTrain(buildings: Entity[], kind: Kind) {
   const pl = runner!.world.players[runner!.me]!;
   if (!affordable(pl, STATS[kind].cost)) { toast(`Need ${costText(STATS[kind].cost)}.`); return; }
   if (pl.supply >= pl.supplyCap) { toast("Supply capped — build a 🏢 Datacenter or ⌨️ Keyboard."); return; }
-  // Prefer the shortest queue so clicks spread across production.
-  const target = [...buildings].sort((a, b) => a.queue.length - b.queue.length)[0]!;
-  issue({ c: "train", ids: [target.id], kind });
+  // Every candidate goes over; the simulation picks the shortest queue when the
+  // command actually lands, so rapid clicks spread across Keyboards properly.
+  issue({ c: "train", ids: buildings.map((b) => b.id), kind });
 }
 
 // --------------------------------------------------------------------- HUD card
@@ -502,6 +513,14 @@ function syncCard() {
     for (const kind of BUILDABLE) {
       add(`${STATS[kind].emoji} ${STATS[kind].label} [${STATS[kind].hotkey}]`, costText(STATS[kind].cost), () => arm(kind));
     }
+  }
+  const owned = sel.filter((e) => STATS[e.kind].building && e.owner === runner!.me && e.kind !== "dung");
+  if (owned.length) {
+    add("♻️ Recycle [R]", `${RECYCLE_PCT}% back`, () => {
+      issue({ c: "recycle", ids: owned.map((e) => e.id) });
+      selection.clear();
+      syncCard();
+    });
   }
   if (sel.some((e) => e.kind === "monkey")) {
     add("💩 Foul ground [P]", "slows any crossing", () => { dungArmed = !dungArmed; placing = null; attackMoveArmed = false; });

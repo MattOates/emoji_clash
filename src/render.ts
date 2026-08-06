@@ -1,5 +1,5 @@
 import {
-  FP, MAP_TILES, TILE, STATS as S, FACE_FACES, MAX_LEVEL, BLAST_RADIUS,
+  FP, MAP_TILES, TILE, STATS as S, FACE_FACES, MAX_LEVEL, BLAST_RADIUS, RES_EMOJI,
   type Entity, type Kind,
 } from "./game/types";
 import type { World } from "./game/sim";
@@ -115,7 +115,11 @@ export class Renderer {
 
     const lerp = (a: number, b: number) => (a + (b - a) * alpha) / FP;
 
+    // Fog is resolved first, because it decides what may be drawn at all.
+    this.computeFog(world, me);
+
     for (const e of world.entities) {
+      if (this.sight(e, me) === 0) continue;
       const x = lerp(e.px, e.x), y = lerp(e.py, e.y), r = S[e.kind].radius / FP;
       ctx.fillStyle = "rgba(0,0,0,0.34)";
       ctx.beginPath();
@@ -124,8 +128,10 @@ export class Renderer {
     }
 
     for (const e of world.entities) {
+      const seen = this.sight(e, me);
+      if (seen === 0) continue;
       const x = lerp(e.px, e.x), y = lerp(e.py, e.y);
-      this.entity(ctx, e, x, y, me, sel.has(e.id), hover?.id === e.id);
+      this.entity(ctx, e, x, y, me, sel.has(e.id), hover?.id === e.id, seen === 2);
     }
 
     // Order lines for the current selection.
@@ -164,7 +170,7 @@ export class Renderer {
       ctx.stroke();
     }
 
-    this.fog(ctx, world, me);
+    this.paintFog(ctx);
     ctx.restore();
 
     if (dragBox) {
@@ -196,13 +202,29 @@ export class Renderer {
 
   /** The ring is the unit's collision circle, drawn at exactly the radius the
    *  simulation separates on — so crowding always looks like what it is. */
+  /** 0 = not drawn at all, 1 = fully seen, 2 = remembered from a past visit.
+   *
+   *  Dimming explored ground was never enough: an enemy unit under 60% fog is
+   *  still an enemy unit you can read, so one scouting pass bought permanent
+   *  vision. Anything not currently in sight is simply not drawn. Structures
+   *  are the exception — those stay as a ghost, the way a map memory should. */
+  private sight(e: Entity, me: number): 0 | 1 | 2 {
+    if (e.owner === me) return 1;
+    if (this.isVisible(e.x, e.y)) return 1;
+    if (!S[e.kind].building) return 0;
+    const tx = (e.x / FP / TILE) | 0, ty = (e.y / FP / TILE) | 0;
+    if (tx < 0 || ty < 0 || tx >= MAP_TILES || ty >= MAP_TILES) return 0;
+    return this.explored[ty * MAP_TILES + tx] ? 2 : 0;
+  }
+
   private entity(ctx: CanvasRenderingContext2D, e: Entity, x: number, y: number, me: number,
-                 selected: boolean, hovered: boolean) {
+                 selected: boolean, hovered: boolean, ghost = false) {
     const c = e.owner < 0 ? NEUTRAL : COLORS[e.owner]!;
     const r = S[e.kind].radius / FP;
     const building = S[e.kind].building;
 
     ctx.save();
+    if (ghost) ctx.globalAlpha = 0.42; // remembered, not observed
     ctx.beginPath();
     ctx.arc(x, y, r, 0, Math.PI * 2);
     ctx.fillStyle = e.owner < 0 ? "rgba(150,110,200,0.10)" : c.body;
@@ -255,7 +277,7 @@ export class Renderer {
       ctx.stroke();
     }
 
-    if (e.owner >= 0 && e.hp < e.maxHp) {
+    if (e.owner >= 0 && e.hp < e.maxHp && !ghost) {
       const hp = Math.max(0, e.hp / e.maxHp);
       ctx.fillStyle = "rgba(0,0,0,0.6)";
       ctx.fillRect(x - r, y - r - 9, r * 2, 4);
@@ -263,7 +285,7 @@ export class Renderer {
       ctx.fillRect(x - r, y - r - 9, r * 2 * hp, 4);
     }
     if (e.cargo > 0) {
-      drawGlyph(ctx, e.cargoRes === "bits" ? "💾" : "🎨" , x + r * 0.8, y - r * 0.8, 11);
+      drawGlyph(ctx, RES_EMOJI[e.cargoRes ?? "bits"], x + r * 0.8, y - r * 0.8, 11);
     }
     // A Janitor looks like anyone else until there is mess to deal with, so the
     // broom only comes out on the job — and waggles while actually scrubbing.
@@ -391,7 +413,7 @@ export class Renderer {
 
   /** Fog is presentation only — the simulation never reads it, so it can never
    *  cause the two peers to disagree. */
-  private fog(ctx: CanvasRenderingContext2D, world: World, me: number) {
+  private computeFog(world: World, me: number) {
     this.visible.fill(0);
     for (const e of world.entities) {
       if (e.owner !== me) continue;
@@ -409,6 +431,9 @@ export class Renderer {
         }
       }
     }
+  }
+
+  private paintFog(ctx: CanvasRenderingContext2D) {
     const fc = this.fogCanvas.getContext("2d")!;
     const img = this.fogImage ?? (this.fogImage = fc.createImageData(MAP_TILES, MAP_TILES));
     for (let i = 0; i < this.visible.length; i++) {

@@ -155,6 +155,7 @@ brighter on the laden side, red where units keep colliding.
 | `D` `Y` `K` `C` `X` `B` | place Drive · Gallery · Keyboard · Cloud · Social Feed · Datacenter |
 | `Ctrl`/`Cmd`+`A` | select every unit of yours on screen |
 | `Ctrl`+`1-9` / `1-9` | assign / recall a control group |
+| `R` | recycle selected structures for 60% back |
 | `P` | Monkey: foul the ground you click |
 | `T` | show/hide the pheromone trails |
 | `Esc` | cancel a pending attack-move or placement |

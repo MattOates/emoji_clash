@@ -1,6 +1,6 @@
 import {
   FP, TILE, MAP_TILES, MAP_SIZE, STATS, IDLE, MAX_LEVEL, BLAST_RADIUS, BLAST_DAMAGE,
-  affordable, pay, faceHp, faceDamage, MUCK_SLOW, DUNG_COOLDOWN, CLEAN_TICKS,
+  affordable, pay, faceHp, faceDamage, MUCK_SLOW, DUNG_COOLDOWN, CLEAN_TICKS, RECYCLE_PCT,
   type Command, type Entity, type Kind, type Player, type Res,
 } from "./types";
 import { PathCache } from "./flow";
@@ -262,16 +262,20 @@ export function applyCommand(w: World, owner: number, cmd: Command) {
       // parallel production quietly overshoots the cap.
       let queued = 0;
       for (const e of w.entities) if (e.owner === owner && STATS[e.kind].building) queued += e.queue.length;
+      // Pick the shortest queue *here*, at apply time. Choosing in the UI meant
+      // several quick clicks all read the same pre-command state and piled onto
+      // one building, so a second Keyboard sat idle instead of doubling output.
+      let pick: Entity | undefined;
       for (const id of cmd.ids) {
         const b = mine(id);
-        if (!b || !b.complete || !canTrain(b.kind, cmd.kind)) continue;
-        if (!affordable(pl, s.cost) || b.queue.length >= 5) continue;
-        if (pl.supply + queued + 1 > pl.supplyCap) continue;
-        pay(pl, s.cost);
-        b.queue.push(cmd.kind);
-        if (b.queue.length === 1) b.queueLeft = s.buildTime;
-        break; // train from a single building per command
+        if (!b || !b.complete || !canTrain(b.kind, cmd.kind) || b.queue.length >= 5) continue;
+        if (!pick || b.queue.length < pick.queue.length) pick = b;
       }
+      if (!pick || !affordable(pl, s.cost)) break;
+      if (pl.supply + queued + 1 > pl.supplyCap) break;
+      pay(pl, s.cost);
+      pick.queue.push(cmd.kind);
+      if (pick.queue.length === 1) pick.queueLeft = s.buildTime;
       break;
     }
     case "rally": {
@@ -296,6 +300,25 @@ export function applyCommand(w: World, owner: number, cmd: Command) {
       formation(monkeys, cmd.x, cmd.y, (e, x, y) => {
         e.order = { kind: "dung", x, y, target: 0, build: null };
       });
+      break;
+    }
+    case "recycle": {
+      // Enough back to relocate a depot when the map changes around you, not so
+      // much that shuffling buildings is free.
+      for (const id of cmd.ids) {
+        const b = mine(id);
+        if (!b || !STATS[b.kind].building || b.kind === "dung") continue;
+        const pl = w.players[owner]!;
+        const c = STATS[b.kind].cost;
+        pl.bits += Math.trunc((c.bits * RECYCLE_PCT) / 100) + b.stockBits;
+        pl.pixels += Math.trunc((c.pixels * RECYCLE_PCT) / 100) + b.stockPixels;
+        pl.slop += Math.trunc((c.slop * RECYCLE_PCT) / 100) + b.stockSlop;
+        for (const q of b.queue) pay(pl, STATS[q].cost, +1); // unspent queue comes back whole
+        b.queue.length = 0;
+        b.stockBits = b.stockPixels = b.stockSlop = 0;
+        b.hp = 0;
+        w.events.push({ x: b.x, y: b.y, kind: "float", text: "♻️" });
+      }
       break;
     }
     case "detonate": {
