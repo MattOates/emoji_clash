@@ -1,13 +1,17 @@
-# EMOJI CLASH — build and deploy.
+# EMOJI CLASH — build, publish, deploy.
 #
-# The build is a single self-contained dist/index.html with no external
-# references, so deploying is one file landing in one directory. Nothing in the
-# page depends on where it is served from, which is why the /ec prefix needs no
-# configuration anywhere.
+# The build is a single self-contained dist/index.html, so deploying is one file
+# landing in one directory. Nothing in the page depends on where it is served
+# from, which is why any URL prefix works with no configuration.
+#
+# Deployment settings are personal, so they live in an untracked deploy.local.mk.
+# Copy deploy.local.mk.example to get started, or pass them on the command line:
+#   make deploy HOST=myserver REMOTE_DIR=/var/www/game
 
 HOST       ?= example
 REMOTE_DIR ?= /var/www/emoji-clash
 URL        ?= https://example.com/emoji-clash
+-include deploy.local.mk
 
 .DEFAULT_GOAL := help
 
@@ -37,8 +41,15 @@ build: node_modules ## Build dist/index.html
 	npm run build
 	@echo "built $$(du -h dist/index.html | cut -f1) -> dist/index.html"
 
+.PHONY: pages
+pages: build ## Copy the build into docs/ for GitHub Pages
+	@mkdir -p docs/play
+	cp dist/index.html docs/play/index.html
+	@test -f dist/music.mp3 && cp dist/music.mp3 docs/play/music.mp3 || true
+	@echo "docs/play/index.html updated — commit and push to publish"
+
 .PHONY: deploy
-deploy: build ## Build, then publish to the live site
+deploy: build ## Build, then publish to your own server
 	@echo "deploying to $(HOST):$(REMOTE_DIR)"
 	ssh $(HOST) 'mkdir -p $(REMOTE_DIR)'
 	scp dist/index.html $(HOST):$(REMOTE_DIR)/index.html

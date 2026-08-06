@@ -1,5 +1,8 @@
 # EMOJI CLASH
 
+**[▶ Play it in your browser](https://mattoates.github.io/emoji_clash/play/)** · [about the game](https://mattoates.github.io/emoji_clash/)
+
+
 A two-player real-time strategy game that runs entirely in the browser, renders
 itself in system emoji, and talks peer-to-peer over WebRTC. There is no game
 server, no signalling server, no lobby and no backend — the whole thing is one
@@ -9,22 +12,26 @@ static HTML file.
 make install
 make dev         # http://localhost:5173
 make build       # -> dist/index.html, a single self-contained file
-make deploy      # build, then scp that one file to the live site
+make pages       # copy that build into docs/ for GitHub Pages
+make deploy      # scp it to a server of your own
 ```
 
-Drop an mp3 at `public/music.mp3` and it becomes looping background music with a
-🔊 toggle in the HUD (remembered in localStorage). It is deliberately *not*
-inlined — at several megabytes it would wreck the single-file build — so it ships
-as a sibling file and the game plays silent if it is missing. The repo ignores
-`public/*.mp3`; supply your own and mind the licence of whatever you use.
-
-`make deploy` publishes to `example:/var/www/emoji-clash`,
-which serves at <https://example.com/emoji-clash>. Because the build inlines
-everything, there are no asset paths to rewrite — the same file works at any URL
-prefix, or off the filesystem.
-
 `dist/index.html` has no external references of any kind. Open it from disk, put
-it on a static host, email it to someone — it works the same everywhere.
+it on a static host, email it to someone — it works the same everywhere, at any
+URL prefix.
+
+Deployment settings live in an untracked `deploy.local.mk` (see
+`deploy.local.mk.example`), or pass them inline:
+`make deploy HOST=myserver REMOTE_DIR=/var/www/game`.
+
+### Music
+
+Drop any mp3 at `public/music.mp3` and it becomes looping background music with
+a 🔊 toggle in the HUD, remembered in localStorage. It is deliberately *not*
+inlined — at several megabytes it would wreck the single-file build — so it
+ships as a sibling file and the game plays silent if it is missing. The repo
+ignores `public/*.mp3`: supply your own, and mind the licence of whatever you
+use.
 
 ## Connecting
 
@@ -240,3 +247,15 @@ src/main.ts         menu, input, HUD, frame loop
 ```
 
 `window.rts` exposes the live runner in the console for poking at a running match.
+
+## GitHub Pages
+
+`make pages` copies the current build into `docs/play/`. With Pages set to serve
+from `main` → `/docs`, `docs/index.html` is the landing page and `docs/play/` is
+the playable build. The soundtrack is never committed, so the published copy is
+silent unless you add one yourself.
+
+## Licence
+
+MIT — see [LICENSE](LICENSE). The emoji themselves are drawn by whichever system
+font the player has; no artwork ships with this repo.

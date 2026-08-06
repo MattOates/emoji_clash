@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>EMOJI CLASH — a serverless peer-to-peer RTS</title>
+<meta name="description" content="A two-player real-time strategy game that runs entirely in the browser, renders itself in system emoji, and plays peer-to-peer over WebRTC." />
+<style>
+  :root {
+    --bg:#05080d; --ink:#d8e6f2; --dim:#8b9db0; --line:rgba(120,200,255,.18);
+    --panel:rgba(9,15,23,.86); --accent:#5bd0ff; --accent2:#ff9a5c;
+    font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box} html,body{margin:0;background:var(--bg);color:var(--ink)}
+  body{background:radial-gradient(ellipse at 50% -10%,#0d1a26,#04070b 65%);min-height:100vh;line-height:1.65}
+  .wrap{max-width:860px;margin:0 auto;padding:64px 22px 90px}
+  h1{font-size:clamp(30px,7vw,52px);letter-spacing:.16em;margin:0 0 6px}
+  h1 span{color:var(--accent)}
+  .tag{color:var(--dim);font-size:15px;margin-bottom:34px}
+  .cta{display:inline-block;padding:14px 30px;border-radius:10px;font-size:17px;text-decoration:none;
+       color:#fff;background:linear-gradient(180deg,#1d6f96,#123f5c);border:1px solid #3ea9d8}
+  .cta:hover{filter:brightness(1.2)}
+  .ghost{margin-left:10px;color:var(--dim);text-decoration:none;border-bottom:1px dotted var(--line)}
+  h2{font-size:15px;letter-spacing:.14em;text-transform:uppercase;color:var(--accent);margin:52px 0 14px}
+  .grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(240px,1fr))}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
+  .card b{display:block;margin-bottom:5px}
+  .card span{color:var(--dim);font-size:13.5px}
+  .roster{display:flex;flex-wrap:wrap;gap:9px;margin-top:6px}
+  .u{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:9px 13px;font-size:13.5px}
+  .u i{font-style:normal;font-size:19px;margin-right:7px}
+  p{color:var(--dim);font-size:14.5px}
+  p b,li b{color:var(--ink)} ul{color:var(--dim);font-size:14.5px;padding-left:20px}
+  code{background:#060b12;border:1px solid var(--line);border-radius:5px;padding:1px 6px;font-size:13px;color:var(--accent2)}
+  footer{margin-top:60px;padding-top:22px;border-top:1px solid var(--line);color:var(--dim);font-size:13px}
+  footer a{color:var(--accent);text-decoration:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>EMOJI <span>CLASH</span></h1>
+  <div class="tag">🙂 🥷 💂 🐒 🧙 🧛 — a two-player real-time strategy game that lives in one HTML file,
+    renders itself entirely in system emoji, and plays peer-to-peer over WebRTC.</div>
+
+  <a class="cta" href="./play/">▶ Play in your browser</a>
+  <a class="ghost" href="https://github.com/MattOates/emoji_clash">Source on GitHub</a>
+
+  <h2>What it is</h2>
+  <p>One static page, about 190&nbsp;KB, with no external references of any kind. No game server, no lobby,
+     no backend, no build step at run time. Two browsers exchange a five-character room code and then talk
+     directly to each other for the rest of the match.</p>
+
+  <h2>Three resources, and a supply line</h2>
+  <div class="grid">
+    <div class="card"><b>💾 bits → 🗄️ Drive</b><span>Everywhere, quick to mine. The bread and butter.</span></div>
+    <div class="card"><b>🎨 pixels → 🖼️ Gallery</b><span>Five times scarcer and nearly twice as slow to dig.</span></div>
+    <div class="card"><b>☁️ Cloud → 🤖 slop</b><span>Fuses 2 bits + 1 pixel. Nothing moves by itself — Engineers
+      carry every load, including the finished slop.</span></div>
+  </div>
+
+  <h2>An army you type out</h2>
+  <p>A ⌨️ <b>Keyboard</b> types fighters into existence. A 📱 <b>Social Feed</b> sours a Smiley one step at a
+     time, and each step costs one 🤖 that somebody physically carried to the building:</p>
+  <div class="roster">
+    <span class="u"><i>🙂</i>→<i>😐</i>→<i>🙁</i>→<i>😠</i><i>😡</i> detonates on death</span>
+    <span class="u"><i>🥷</i>Ninja</span><span class="u"><i>💂</i>Guard</span>
+    <span class="u"><i>🐒</i>Monkey — fouls ground with 💩</span>
+    <span class="u"><i>🧙</i>Wizard</span><span class="u"><i>🧛</i>Vampire</span>
+    <span class="u"><i>👨🏻‍🔧</i>Janitor — the only 💩 counter</span>
+  </div>
+
+  <h2>Under the hood</h2>
+  <ul>
+    <li><b>Deterministic lockstep.</b> No world state crosses the wire, only commands. Both peers run an
+        identical integer-only simulation and compare checksums to catch any divergence.</li>
+    <li><b>Flow-field pathing.</b> Obstacles rasterise onto a tile grid; each goal gets a Dijkstra field,
+        shared by everyone heading there.</li>
+    <li><b>Stigmergy.</b> Carriers lay pheromone trails, collisions mark jams that later routes bend around,
+        and crews spread across deposits instead of stacking. Press <code>T</code> in game to see it.</li>
+    <li><b>Emoji as the entire art pipeline.</b> No sprites, no images. Glyphs are rasterised once and
+        blitted; team colour comes from the ring behind, drawn at exactly the collision radius.</li>
+  </ul>
+
+  <footer>
+    Built with TypeScript, Vite and a canvas. Source and full write-up on
+    <a href="https://github.com/MattOates/emoji_clash">GitHub</a>.
+  </footer>
+</div>
+</body>
+</html>
