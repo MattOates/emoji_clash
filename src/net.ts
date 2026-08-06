@@ -18,6 +18,24 @@ const ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const NAMESPACE = "emojiclash-"; // keeps us out of other apps' id space
 const CONNECT_TIMEOUT = 45000;
 
+// PeerJS ships its own free TURN servers, but they are heavily shared and drop
+// out often — and "introduced by the broker, then cannot connect" is exactly
+// what a missing relay looks like. Two peers on one LAN hit this too: Chrome
+// hides local addresses behind mDNS .local candidates, and if mDNS is blocked
+// the only fallback is STUN, which needs a router willing to hairpin traffic
+// back inside. Many will not. So a second, independent relay is listed, with
+// TCP/443 last because it looks like ordinary HTTPS and survives networks that
+// drop everything else.
+const ICE: RTCIceServer[] = [
+  { urls: "stun:stun.l.google.com:19302" },
+  { urls: "turn:eu-0.turn.peerjs.com:3478", username: "peerjs", credential: "peerjsp" },
+  { urls: "turn:us-0.turn.peerjs.com:3478", username: "peerjs", credential: "peerjsp" },
+  { urls: "turn:openrelay.metered.ca:80", username: "openrelayproject", credential: "openrelayproject" },
+  { urls: "turn:openrelay.metered.ca:443", username: "openrelayproject", credential: "openrelayproject" },
+  { urls: "turn:openrelay.metered.ca:443?transport=tcp", username: "openrelayproject", credential: "openrelayproject" },
+];
+const PEER_OPTS = { debug: 2, config: { iceServers: ICE, iceCandidatePoolSize: 4 } };
+
 export function newRoomCode(): string {
   const r = new Uint8Array(5);
   crypto.getRandomValues(r);
@@ -87,7 +105,17 @@ function traceIce(conn: DataConnection, who: string, log?: (s: string) => void) 
   const report = () => {
     const st = pc.iceConnectionState;
     if (st === "checking") log(`${who}: introduced, trying to reach each other…`);
-    else if (st === "connected" || st === "completed") log(`${who}: connected.`);
+    else if (st === "connected" || st === "completed") {
+      pc.getStats().then((stats) => {
+        let via = "";
+        stats.forEach((r: any) => {
+          if (r.type === "candidate-pair" && r.state === "succeeded" && r.localCandidateId) {
+            stats.forEach((c: any) => { if (c.id === r.localCandidateId) via = c.candidateType; });
+          }
+        });
+        log(`${who}: connected${via ? " via " + (via === "relay" ? "a TURN relay" : via) : ""}.`);
+      }).catch(() => log(`${who}: connected.`));
+    }
     else if (st === "failed") log(`${who}: could not reach the other browser — you are behind NATs that need a TURN relay.`);
     else if (st === "disconnected") log(`${who}: connection lost.`);
   };
@@ -108,7 +136,7 @@ function fail(peer: Peer, err: any): Error {
 /** Claim a room code and wait for somebody to walk in. */
 export function hostRoom(code: string, log?: (s: string) => void): Promise<Net> {
   return new Promise((resolve, reject) => {
-    const peer = new Peer(NAMESPACE + code, { debug: 2 });
+    const peer = new Peer(NAMESPACE + code, PEER_OPTS);
     let settled = false;
     peer.on("open", () => log?.("Room open — waiting for your opponent…"));
     peer.on("connection", (conn) => {
@@ -134,7 +162,7 @@ export function hostRoom(code: string, log?: (s: string) => void): Promise<Net> 
 /** Walk into somebody else's room. */
 export function joinRoom(code: string, log?: (s: string) => void): Promise<Net> {
   return new Promise((resolve, reject) => {
-    const peer = new Peer({ debug: 2 });
+    const peer = new Peer(PEER_OPTS);
     let settled = false;
     const giveUp = setTimeout(() => {
       if (!settled) reject(fail(peer, { message: "timed out waiting for the channel to open — check the console for PeerJS and ICE lines" }));
