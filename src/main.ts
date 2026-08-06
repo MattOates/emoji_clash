@@ -86,6 +86,30 @@ function copy(text: string, msg: string) {
   );
 }
 
+// ----------------------------------------------------------------------- music
+
+// The track is a sibling file rather than inlined: at 5.6MB it would bloat the
+// single-file build past any sensible page weight. If it is missing the game
+// simply plays silent — nothing here is allowed to be fatal.
+const music = new Audio("./music.mp3");
+music.loop = true;
+music.volume = 0.32;
+music.preload = "auto";
+let musicOn = localStorage.getItem("ec.music") !== "off";
+
+function paintAudio() { $("audio").textContent = musicOn ? "🔊" : "🔇"; }
+function startMusic() {
+  // Browsers only allow playback off a user gesture, which starting a match is.
+  if (musicOn) music.play().catch(() => {});
+}
+$("audio").onclick = () => {
+  musicOn = !musicOn;
+  localStorage.setItem("ec.music", musicOn ? "on" : "off");
+  paintAudio();
+  if (musicOn) startMusic(); else music.pause();
+};
+paintAudio();
+
 // ------------------------------------------------------------------- game setup
 
 const canvas = $<HTMLCanvasElement>("game");
@@ -116,6 +140,7 @@ function start(mode: Mode, me: number, seed: number, net?: Net) {
     };
   }
   lastSim = performance.now();
+  startMusic();
   (window as any).rts = {
     get runner() { return runner; }, cam, selection,
     get armed() { return { placing, attackMoveArmed }; },

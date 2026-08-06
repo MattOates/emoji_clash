@@ -12,6 +12,12 @@ make build       # -> dist/index.html, a single self-contained file
 make deploy      # build, then scp that one file to the live site
 ```
 
+Drop an mp3 at `public/music.mp3` and it becomes looping background music with a
+🔊 toggle in the HUD (remembered in localStorage). It is deliberately *not*
+inlined — at several megabytes it would wreck the single-file build — so it ships
+as a sibling file and the game plays silent if it is missing. The repo ignores
+`public/*.mp3`; supply your own and mind the licence of whatever you use.
+
 `make deploy` publishes to `example:/var/www/emoji-clash`,
 which serves at <https://example.com/emoji-clash>. Because the build inlines
 everything, there are no asset paths to rewrite — the same file works at any URL

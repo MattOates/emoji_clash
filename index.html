@@ -70,6 +70,10 @@
       .pill.crystal i { background: #c58bff; }
       .pill.supply i { background: #6ee7a0; }
       #spacer { flex: 1; }
+      #audio {
+        pointer-events: auto; padding: 2px 7px; font-size: 13px; line-height: 1.4;
+        background: rgba(30, 48, 66, 0.5);
+      }
       #warn { color: var(--bad); }
 
       #card {
@@ -112,6 +116,7 @@
         <span id="spacer"></span>
         <span id="warn"></span>
         <span class="pill"><i></i><span id="netinfo">practice</span></span>
+        <button id="audio" title="Music on/off">🔊</button>
       </div>
       <div id="toasts"></div>
       <div id="mode" class="hidden"></div>

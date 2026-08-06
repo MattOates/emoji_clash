@@ -42,6 +42,8 @@ deploy: build ## Build, then publish to the live site
 	@echo "deploying to $(HOST):$(REMOTE_DIR)"
 	ssh $(HOST) 'mkdir -p $(REMOTE_DIR)'
 	scp dist/index.html $(HOST):$(REMOTE_DIR)/index.html
+	@test -f dist/music.mp3 && scp dist/music.mp3 $(HOST):$(REMOTE_DIR)/music.mp3 \
+		|| echo "no dist/music.mp3 — deploying without the soundtrack"
 	@echo "live at $(URL)"
 
 .PHONY: clean

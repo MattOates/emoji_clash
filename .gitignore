@@ -1,2 +1,5 @@
 node_modules
 dist
+
+# Soundtrack is not ours to redistribute; keep it out of the repo.
+public/*.mp3
