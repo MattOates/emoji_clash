@@ -29,6 +29,16 @@
       button:active:not(:disabled) { transform: translateY(1px); }
       button:disabled { opacity: 0.38; cursor: not-allowed; }
       button.primary { background: linear-gradient(180deg, #1d5f83, #123f5c); border-color: #3ea9d8; }
+      .code {
+        font-size: 34px; letter-spacing: 0.3em; color: var(--accent); text-align: center;
+        padding: 14px; background: #060b12; border: 1px solid var(--line); border-radius: 9px;
+      }
+      input {
+        width: 100%; font: 15px ui-monospace, Menlo, monospace; letter-spacing: 0.12em;
+        color: var(--ink); background: #060b12; border: 1px solid var(--line);
+        border-radius: 7px; padding: 10px;
+      }
+      #joinCode { font-size: 24px; letter-spacing: 0.28em; text-align: center; text-transform: uppercase; }
       textarea {
         width: 100%; height: 92px; resize: none; font: 11px/1.45 ui-monospace, Menlo, monospace;
         color: var(--ink); background: #060b12; border: 1px solid var(--line); border-radius: 7px; padding: 8px;
@@ -152,34 +162,24 @@
           <button id="btnHost">Host a match</button>
           <button id="btnJoin">Join a match</button>
         </div>
-        <div class="row" style="margin-top: 12px">
-          <label class="chk"><input type="checkbox" id="useStun" checked /> use public STUN (uncheck for LAN / offline-only)</label>
-        </div>
 
         <div id="hostPane" class="hidden">
-          <div class="step">1 · send this invite link to your opponent</div>
-          <textarea id="hostCode" readonly placeholder="generating…"></textarea>
-          <div class="row" style="margin-top: 8px">
-            <button id="copyHost">Copy invite link</button>
-          </div>
-          <div class="step">2 · paste the reply code they send back</div>
-          <textarea id="hostAnswer" placeholder="RTS1:…"></textarea>
-          <div class="row" style="margin-top: 8px">
-            <button class="primary" id="hostStart">Connect</button>
-            <button id="hostBack">Back</button>
+          <div class="step">your room code</div>
+          <div class="code" id="roomCode">—</div>
+          <div class="step">or send this link</div>
+          <input id="roomLink" readonly />
+          <div class="row" style="margin-top: 10px">
+            <button id="copyLink">Copy link</button>
+            <button id="copyCode">Copy code</button>
+            <button id="hostBack">Cancel</button>
           </div>
         </div>
 
         <div id="joinPane" class="hidden">
-          <div class="step">1 · paste the invite link you were given</div>
-          <textarea id="joinOffer" placeholder="RTS1:…"></textarea>
-          <div class="row" style="margin-top: 8px">
-            <button class="primary" id="joinGo">Generate reply code</button>
-          </div>
-          <div class="step">2 · send this code back to the host, then wait</div>
-          <textarea id="joinCode" readonly></textarea>
-          <div class="row" style="margin-top: 8px">
-            <button id="copyJoin">Copy reply code</button>
+          <div class="step">room code</div>
+          <input id="joinCode" placeholder="ABC23" maxlength="8" autocomplete="off" spellcheck="false" />
+          <div class="row" style="margin-top: 10px">
+            <button class="primary" id="joinGo">Join</button>
             <button id="joinBack">Back</button>
           </div>
         </div>

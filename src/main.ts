@@ -5,7 +5,7 @@ import {
 import { canTrain, siteClear, trainableAt, ENROLL_SLOP, type World } from "./game/sim";
 import { RECYCLE_PCT } from "./game/types";
 import { createRunner, type Mode, type Runner } from "./lockstep";
-import { createGuest, createHost, type Net } from "./net";
+import { hostRoom, joinRoom, newRoomCode, type Net } from "./net";
 import { COLORS, Renderer, emojiFor, type Camera } from "./render";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -18,7 +18,6 @@ function setStatus(text: string, cls: "" | "err" | "ok" = "") {
   status.textContent = text;
   status.className = "status " + cls;
 }
-const stun = () => $<HTMLInputElement>("useStun").checked;
 
 function showPane(which: "menu" | "host" | "join") {
   $("modeButtons").classList.toggle("hidden", which !== "menu");
@@ -27,97 +26,69 @@ function showPane(which: "menu" | "host" | "join") {
   setStatus("");
 }
 
+const roomLink = (code: string) =>
+  location.origin + location.pathname + "#r=" + code;
+
 $("btnPractice").onclick = () => start("practice", 0, (Math.random() * 2 ** 31) | 0);
 
-/** The invite carries the offer in the URL fragment, so it never reaches a
- *  server log and needs no server config. The answer still has to come back by
- *  hand — a URL only travels one way, and WebRTC needs both halves. */
-const inviteLink = (code: string) =>
-  location.origin + location.pathname + "#j=" + encodeURIComponent(code);
-
-function warnAboutCandidates(k: { host: number; srflx: number; relay: number }) {
-  if (k.srflx === 0 && k.relay === 0) {
-    setStatus("Warning: no public address found — STUN did not answer. This link "
-      + "will only work between browsers on the same network.", "err");
-  }
-}
-
 $("btnHost").onclick = async () => {
+  const code = newRoomCode();
   showPane("host");
-  setStatus("Gathering connection candidates…");
+  $("roomCode").textContent = code;
+  $<HTMLInputElement>("roomLink").value = roomLink(code);
+  setStatus("Opening the room…");
   try {
-    const session = await createHost(stun(), (m) => setStatus(m));
-    $<HTMLTextAreaElement>("hostCode").value = inviteLink(session.code);
-    setStatus("Send that link to your opponent, then paste the code they send back.");
-    warnAboutCandidates(session.kinds);
-    $("hostStart").onclick = async () => {
-      const answer = $<HTMLTextAreaElement>("hostAnswer").value.trim();
-      if (!answer) return setStatus("Paste the join code first.", "err");
-      try {
-        setStatus("Connecting…");
-        await session.accept(answer);
-        const net = await Promise.race([
-          session.ready,
-          new Promise<never>((_, rej) =>
-            setTimeout(() => rej(new Error("timed out after 30s — the two browsers could not reach each other")), 30000)),
-        ]);
-        const seed = (Math.random() * 2 ** 31) | 0;
-        net.send({ t: "start", seed });
-        start("peer", 0, seed, net);
-      } catch (err) {
-        setStatus("Could not connect: " + (err as Error).message, "err");
-      }
-    };
+    const net = await hostRoom(code, (m) => setStatus(m));
+    // The host owns the seed, so both sides build the same world.
+    const seed = (Math.random() * 2 ** 31) | 0;
+    net.send({ t: "start", seed });
+    start("peer", 0, seed, net);
   } catch (err) {
-    setStatus("Failed to create a host code: " + (err as Error).message, "err");
+    setStatus((err as Error).message, "err");
   }
 };
 
-$("btnJoin").onclick = () => showPane("join");
+$("btnJoin").onclick = () => { showPane("join"); $<HTMLInputElement>("joinCode").focus(); };
 
-async function joinWith(offer: string) {
+async function join(code: string) {
+  showPane("join");
+  $<HTMLInputElement>("joinCode").value = code;
+  setStatus("Connecting to " + code + "…");
   try {
-    setStatus("Building your reply code…");
-    // Anything after #j= may have arrived through a chat client that mangled it.
-    const code = offer.includes("#j=") ? decodeURIComponent(offer.split("#j=")[1]!) : offer;
-    const guest = await createGuest(code, stun(), (m) => setStatus(m));
-    $<HTMLTextAreaElement>("joinCode").value = guest.code;
-    setStatus("Send that code back to the host. The match starts when they paste it.", "ok");
-    warnAboutCandidates(guest.kinds);
-    const net = await guest.ready;
+    const net = await joinRoom(code, (m) => setStatus(m));
     setStatus("Connected — waiting for the host to start…", "ok");
-    net.onMessage = (msg) => {
+    net.onMessage = (msg: any) => {
       if (msg.t === "start") start("peer", 1, msg.seed, net);
     };
   } catch (err) {
-    setStatus("That did not work: " + (err as Error).message, "err");
+    setStatus((err as Error).message, "err");
   }
 }
 
 $("joinGo").onclick = () => {
-  const offer = $<HTMLTextAreaElement>("joinOffer").value.trim();
-  if (!offer) return setStatus("Paste the invite link first.", "err");
-  void joinWith(offer);
+  const code = $<HTMLInputElement>("joinCode").value.trim().toUpperCase();
+  if (!code) return setStatus("Enter the room code first.", "err");
+  void join(code);
 };
+$<HTMLInputElement>("joinCode").addEventListener("keydown", (ev) => {
+  if (ev.key === "Enter") $("joinGo").click();
+});
 
-// Opened via an invite link: skip straight to producing the reply code.
-if (location.hash.startsWith("#j=")) {
-  const code = decodeURIComponent(location.hash.slice(3));
-  showPane("join");
-  $<HTMLTextAreaElement>("joinOffer").value = code;
-  void joinWith(code);
-}
-
-$("hostBack").onclick = () => showPane("menu");
+$("hostBack").onclick = () => location.reload();
 $("joinBack").onclick = () => showPane("menu");
-$("copyHost").onclick = () => copy($<HTMLTextAreaElement>("hostCode").value, "Invite link copied.");
-$("copyJoin").onclick = () => copy($<HTMLTextAreaElement>("joinCode").value, "Reply code copied.");
+$("copyLink").onclick = () => copy($<HTMLInputElement>("roomLink").value, "Invite link copied.");
+$("copyCode").onclick = () => copy($("roomCode").textContent ?? "", "Room code copied.");
 
 function copy(text: string, msg: string) {
   navigator.clipboard.writeText(text).then(
     () => setStatus(msg, "ok"),
     () => setStatus("Clipboard blocked — select the text and copy manually.", "err"),
   );
+}
+
+// Arrived on an invite link: go straight in.
+if (location.hash.startsWith("#r=")) {
+  void join(decodeURIComponent(location.hash.slice(3)).toUpperCase());
 }
 
 // ----------------------------------------------------------------------- music
