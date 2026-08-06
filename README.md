@@ -83,6 +83,55 @@ The field is a pure function of the grid and the goal, so caching and eviction
 cannot affect the outcome, and the flood is integer-only with ties broken by tile
 index — a path that differed by one tile between peers would desync the match.
 
+## Stigmergy
+
+Carriers leave pheromone on the ground and read what other crews left. This does
+*not* replace the flow field — Dijkstra already returns the shortest route, so
+trail-laying could only be worse at that job. It adds the things exact
+shortest-path cannot express.
+
+Four lane grids — bits-out, bits-home, pixels-out, pixels-home — plus a friction
+grid marking where units actually collided. Everything decays on a ~5.5 second
+half-life (`v -= v>>4`, ten ticks apart), so the map reflects the last few
+seconds of real traffic and adapts on its own as deposits run dry and routes
+move. All integer, fixed iteration order: this feeds movement, so both peers must
+agree on it exactly.
+
+Three effects, and what each one is actually worth. Measured by total resources
+gathered over 5000 ticks on the standard map, mixed bit and pixel crews, against
+the same run with the feature off:
+
+| crew | crowd-aware deposit choice | collision-friction routing |
+|---|---|---|
+| 8  | +49% | — |
+| 16 | +48% | −3% |
+| 24 | +48% | +11% |
+| 32 | +27% | +14% |
+
+- **Crowd-aware deposit choice** is the big win. A deposit already committed to
+  by other crew "feels" 70px further away, so miners spread out instead of
+  stacking on the nearest pile, and they stay on the resource they were already
+  working rather than collapsing into one crew after a delivery.
+- **Collision friction** marks where units genuinely bump. Raw traffic volume is
+  a bad signal — a busy lane flowing freely costs nothing — but collisions are
+  the real jams, and folding them into the flow field's edge costs bends later
+  routes around them. It pays once there is enough crew to actually jam.
+- **Directional lanes** steer a carrier away from every *other* crew's trail, so
+  a shared corridor separates into parallel lanes. Two guards: it only fires
+  where collisions are actually happening, and never within three tiles of a
+  goal, because crowding at a deposit or a depot is units correctly converging
+  rather than a jam to solve.
+
+Honest result on that third one: **lane separation does not pay for itself.** On
+its own it was worth +8–10%, but stacked on crowd-aware deposit choice it ranges
+from −5% to +1% — the corridors are no longer contested enough to be worth the
+lateral distance. It ships at a low bias (12% of a step) because it looks right
+and costs nothing measurable, not because it earns its keep. `LANE_BIAS = 0`
+turns it off.
+
+Press `T` to see the pheromone: blue for bit crews, violet for pixel crews,
+brighter on the laden side, red where units keep colliding.
+
 ## Playing
 
 | | |
@@ -94,6 +143,7 @@ index — a path that differed by one tile between peers would desync the match.
 | `D` `Y` `K` `C` `X` `B` | place Drive · Gallery · Keyboard · Cloud · Social Feed · Datacenter |
 | `Ctrl`/`Cmd`+`A` | select every unit of yours on screen |
 | `Ctrl`+`1-9` / `1-9` | assign / recall a control group |
+| `T` | show/hide the pheromone trails |
 | `Esc` | cancel a pending attack-move or placement |
 | Arrows, middle-drag, minimap | pan · wheel zooms · `Space` jumps home |
 
@@ -137,6 +187,7 @@ Destroy everything the opponent owns to win.
 src/game/types.ts   stats, costs, commands, fixed-point constants
 src/game/sim.ts     the deterministic simulation — integers only
 src/game/flow.ts    obstacle grid and cached flow fields for navigation
+src/game/trails.ts  pheromone lanes, collision friction, evaporation
 src/game/ai.ts      practice-mode opponent (deterministic, runs inside the sim)
 src/lockstep.ts     turn scheduling, command exchange, checksum comparison
 src/net.ts          WebRTC peer setup and the compressed offer/answer codes

@@ -3,6 +3,7 @@ import {
   type Entity, type Kind,
 } from "./game/types";
 import type { World } from "./game/sim";
+import { BITS_OUT, BITS_HOME, PIX_OUT, PIX_HOME, TRAIL_MAX } from "./game/trails";
 
 export interface Camera { x: number; y: number; zoom: number }
 
@@ -60,6 +61,9 @@ export class Renderer {
   private explored = new Uint8Array(MAP_TILES * MAP_TILES);
   private visible = new Uint8Array(MAP_TILES * MAP_TILES);
   private fogImage: ImageData | null = null;
+  private trailCanvas: HTMLCanvasElement;
+  private trailImage: ImageData | null = null;
+  showTrails = true;
   private puffs: Puff[] = [];
   minimap = { x: 0, y: 0, size: 190 };
 
@@ -67,6 +71,8 @@ export class Renderer {
     this.terrain = buildTerrain(seed);
     this.fogCanvas = document.createElement("canvas");
     this.fogCanvas.width = this.fogCanvas.height = MAP_TILES;
+    this.trailCanvas = document.createElement("canvas");
+    this.trailCanvas.width = this.trailCanvas.height = MAP_TILES;
   }
 
   addEvents(events: { x: number; y: number; kind: string; text?: string }[]) {
@@ -94,6 +100,15 @@ export class Renderer {
 
     ctx.drawImage(this.terrain, 0, 0);
     this.gridOverlay(ctx, cam, w, h);
+    if (this.showTrails) this.trails(world);
+    if (this.showTrails) {
+      ctx.save();
+      ctx.imageSmoothingEnabled = true;
+      ctx.globalCompositeOperation = "lighter";
+      ctx.globalAlpha = 0.42;
+      ctx.drawImage(this.trailCanvas, -TILE / 2, -TILE / 2, MAP_PX + TILE, MAP_PX + TILE);
+      ctx.restore();
+    }
 
     const lerp = (a: number, b: number) => (a + (b - a) * alpha) / FP;
 
@@ -306,6 +321,31 @@ export class Renderer {
       }
       ctx.globalAlpha = 1;
     }
+  }
+
+  /** The pheromone made visible: blue for the bit crews, violet for the pixel
+   *  crews, brighter on the laden side, red where units keep colliding. The
+   *  lanes you can see are literally the ones the simulation is steering by. */
+  private trails(world: World) {
+    const t = world.trails;
+    const c = this.trailCanvas.getContext("2d")!;
+    const img = this.trailImage ?? (this.trailImage = c.createImageData(MAP_TILES, MAP_TILES));
+    const d = img.data;
+    const scale = (v: number, k: number) => Math.min(255, (v * k) / TRAIL_MAX | 0);
+    for (let i = 0; i < MAP_TILES * MAP_TILES; i++) {
+      const bo = t.lanes[BITS_OUT]![i]!, bh = t.lanes[BITS_HOME]![i]!;
+      const po = t.lanes[PIX_OUT]![i]!, ph = t.lanes[PIX_HOME]![i]!;
+      const fr = t.friction[i]!;
+      const blue = scale(bo, 700) + scale(bh, 1500);
+      const viol = scale(po, 700) + scale(ph, 1500);
+      const red = scale(fr, 1400);
+      const o = i * 4;
+      d[o] = Math.min(255, viol * 0.7 + red);
+      d[o + 1] = Math.min(255, blue * 0.35 + viol * 0.2);
+      d[o + 2] = Math.min(255, blue + viol * 0.9);
+      d[o + 3] = Math.min(150, Math.max(blue, viol, red));
+    }
+    c.putImageData(img, 0, 0);
   }
 
   /** Fog is presentation only — the simulation never reads it, so it can never

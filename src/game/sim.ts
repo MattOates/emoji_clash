@@ -4,6 +4,7 @@ import {
   type Command, type Entity, type Kind, type Player, type Res,
 } from "./types";
 import { PathCache } from "./flow";
+import { Trails, laneIndex, DECAY_EVERY, CONGEST_EVERY, TRAIL_STRONG, FRICTION_FLOOR } from "./trails";
 
 // ---------------------------------------------------------------- integer math
 
@@ -35,6 +36,7 @@ export const BUILD_RANGE = 22 * FP;
 export const ENROLL_TICKS = 70;
 export const CONVERT_TICKS = 26;
 export const SUPPLY_MAX = 120;
+export const LANE_BIAS = 12; // percent of a step that may be spent moving sideways
 export const ENROLL_COST = { bits: 30, pixels: 0, slop: 2 };
 
 export interface World {
@@ -47,6 +49,10 @@ export interface World {
   events: { x: number; y: number; kind: string; text?: string }[]; // render-only
   winner: number; // -1 while undecided
   paths: PathCache; // derived from the entities; never part of the checksum
+  trails: Trails; // pheromone laid by carriers; feeds movement, so it is sim state
+  laneBias: number; // percent of a step spendable on lane separation; 0 disables
+  spread: boolean; // crowding-aware deposit choice (off only for A/B measurement)
+  avoidJams: boolean; // fold collision friction into routing cost (A/B)
 }
 
 function makeEntity(w: World, kind: Kind, owner: number, x: number, y: number, complete = true): Entity {
@@ -76,6 +82,7 @@ export function createWorld(seed: number): World {
       { bits: 250, pixels: 60, slop: 0, supply: 0, supplyCap: 0, defeated: false },
     ],
     events: [], winner: -1, paths: new PathCache(),
+    trails: new Trails(), laneBias: LANE_BIAS, spread: true, avoidJams: true,
   };
 
   const t = (n: number) => Math.round(n * TILE * FP); // tiles -> fixed-point, integral
@@ -308,6 +315,10 @@ export function step(w: World, cmds: { owner: number; cmd: Command }[]) {
   w.events.length = 0;
   for (const { owner, cmd } of cmds) applyCommand(w, owner, cmd);
   w.paths.refresh(w.entities);
+  if (w.tick % DECAY_EVERY === 0) w.trails.decay();
+  if (w.avoidJams && w.tick % CONGEST_EVERY === 0 && w.trails.refreshCongestion()) {
+    w.paths.setCongestion(w.trails.congestion);
+  }
 
   for (const e of w.entities) {
     if (e.hp <= 0 || nodeRes(e.kind)) continue;
@@ -415,7 +426,7 @@ function stepUnit(w: World, e: Entity) {
       const res = node && nodeRes(node.kind);
       if (e.cargo >= CARGO_SIZE) { e.order = { kind: "returnCargo", x: e.x, y: e.y, target: 0, build: null }; return; }
       if (!node || !res || node.amount <= 0) {
-        const next = nearest(w, e, (c) => !!nodeRes(c.kind) && c.amount > 0);
+        const next = pickNode(w, e, node ? nodeRes(node.kind) : e.cargoRes);
         e.order = next
           ? { kind: "harvest", x: next.x, y: next.y, target: next.id, build: null }
           : { ...IDLE };
@@ -453,9 +464,10 @@ function stepUnit(w: World, e: Entity) {
       if (e.cargoRes === "bits") pl.bits += e.cargo;
       else if (e.cargoRes === "pixels") pl.pixels += e.cargo;
       w.events.push({ x: depot.x, y: depot.y - 26 * FP, kind: "float", text: e.cargoRes === "bits" ? "💾" : "🎨" });
+      const was = e.cargoRes;
       e.cargo = 0;
       e.cargoRes = null;
-      const node = nearest(w, e, (c) => !!nodeRes(c.kind) && c.amount > 0);
+      const node = pickNode(w, e, was);
       e.order = node
         ? { kind: "harvest", x: node.x, y: node.y, target: node.id, build: null }
         : { ...IDLE };
@@ -477,7 +489,7 @@ function stepUnit(w: World, e: Entity) {
         b.progress = 0;
         w.events.push({ x: b.x, y: b.y, kind: "built", text: "✨" });
         recomputeSupply(w);
-        const node = nearest(w, e, (c) => !!nodeRes(c.kind) && c.amount > 0);
+        const node = pickNode(w, e, null);
         e.order = node
           ? { kind: "harvest", x: node.x, y: node.y, target: node.id, build: null }
           : { ...IDLE };
@@ -576,6 +588,72 @@ function stepBy(e: Entity, dx: number, dy: number, d: number, speed: number) {
   e.y = clamp(e.y + Math.trunc((dy * speed) / d), 0, MAP_SIZE);
 }
 
+const LANE_LOOK = 1; // tiles ahead to sniff
+const LANE_ENDPOINT = 3; // tiles around a goal where lane logic is switched off
+
+/** Steer away from the pheromone of every crew that is not this one.
+ *
+ *  Two carriers meeting head-on used to shove through each other via
+ *  separation, and that is where harvesting throughput quietly bleeds away. A
+ *  bit crew crossing a pixel crew is the same problem wearing a different hat.
+ *  So each carrier reads how thick the *other* lanes are on either side of the
+ *  path ahead and drifts toward the thinner side. Two flows push each other
+ *  apart until they settle into separate lanes.
+ *
+ *  On an empty road there is nothing to avoid, and swerving anyway just costs
+ *  distance — hence the floor. */
+function laneShift(w: World, e: Entity, dx: number, dy: number, d: number, speed: number, goalD: number): [number, number] {
+  const lane = laneOf(w, e);
+  if (lane < 0 || w.laneBias <= 0 || d === 0) return [0, 0];
+  const cell = TILE * FP;
+  // Crowding at the deposit and at the depot is not a jam to be solved — it is
+  // units correctly converging on the same point. Swerving there just pushes
+  // them off the thing they are trying to reach, so leave the endpoints alone.
+  if (goalD < LANE_ENDPOINT * cell) return [0, 0];
+  const fx = Math.trunc((dx * FP) / d), fy = Math.trunc((dy * FP) / d);
+  const ahead = LANE_LOOK * cell;
+  const px = e.x + Math.trunc((fx * ahead) / FP);
+  const py = e.y + Math.trunc((fy * ahead) / FP);
+  const nx = -fy, ny = fx; // right-hand normal
+  // Swerve only where units genuinely bump into each other. Volume alone is a
+  // bad trigger — a busy lane that flows freely costs nothing, and steering on
+  // the left/right trail difference never stops: once the lanes separate, each
+  // carrier still senses the other off to one side and curves away forever.
+  // Friction is self-limiting, because a separated lane stops colliding.
+  const jam = w.trails.jam(px, py);
+  if (jam < FRICTION_FLOOR) return [0, 0];
+  const rt = w.trails.foreign(lane,
+    Math.floor((px + Math.trunc((nx * cell) / FP)) / cell),
+    Math.floor((py + Math.trunc((ny * cell) / FP)) / cell));
+  const lf = w.trails.foreign(lane,
+    Math.floor((px - Math.trunc((nx * cell) / FP)) / cell),
+    Math.floor((py - Math.trunc((ny * cell) / FP)) / cell));
+  const sign = rt > lf ? -1 : 1; // to the thinner side; ties keep right
+  const mag = Math.trunc((speed * w.laneBias * Math.min(TRAIL_STRONG, jam)) / (100 * TRAIL_STRONG));
+  return [Math.trunc((nx * sign * mag) / FP), Math.trunc((ny * sign * mag) / FP)];
+}
+
+/** Which lane this unit belongs to right now, or -1 for "not a carrier". */
+function laneOf(w: World, e: Entity): number {
+  if (e.kind !== "engineer") return -1;
+  switch (e.order.kind) {
+    case "harvest": {
+      if (e.cargo > 0) return laneIndex(e.cargoRes, true);
+      const node = w.byId.get(e.order.target);
+      return laneIndex(node ? nodeRes(node.kind) : null, false);
+    }
+    case "returnCargo": return laneIndex(e.cargoRes, true);
+    case "haul": return laneIndex(e.cargoRes, e.cargo > 0);
+    default: return -1;
+  }
+}
+
+/** Lay down what this unit is doing, for whoever comes next. */
+function markTrail(w: World, e: Entity) {
+  const lane = laneOf(w, e);
+  if (lane >= 0) w.trails.drop(e.x, e.y, lane);
+}
+
 /** The first structure standing in the way of a straight run at (tx, ty).
  *  `ignore` is whatever the unit is deliberately walking up to. */
 function blocker(w: World, e: Entity, tx: number, ty: number, ignore: number): Entity | undefined {
@@ -618,6 +696,9 @@ function moveToward(w: World, e: Entity, tx: number, ty: number, speed: number, 
   if (!ob) {
     if (d <= speed) { e.x = tx; e.y = ty; return true; }
     stepBy(e, dx, dy, d, speed);
+    const [sx, sy] = laneShift(w, e, dx, dy, d, speed, d);
+    if (sx || sy) { e.x = clamp(e.x + sx, 0, MAP_SIZE); e.y = clamp(e.y + sy, 0, MAP_SIZE); }
+    markTrail(w, e);
     return false;
   }
 
@@ -625,7 +706,13 @@ function moveToward(w: World, e: Entity, tx: number, ty: number, speed: number, 
   if (wp) {
     const wx = wp.x - e.x, wy = wp.y - e.y;
     const wd = isqrt(wx * wx + wy * wy);
-    if (wd > 0) { stepBy(e, wx, wy, wd, speed); return false; }
+    if (wd > 0) {
+      stepBy(e, wx, wy, wd, speed);
+      const [sx, sy] = laneShift(w, e, wx, wy, wd, speed, d);
+      if (sx || sy) { e.x = clamp(e.x + sx, 0, MAP_SIZE); e.y = clamp(e.y + sy, 0, MAP_SIZE); }
+      markTrail(w, e);
+      return false;
+    }
   }
 
   const ox = e.x - ob.x, oy = e.y - ob.y;
@@ -663,6 +750,37 @@ function acquire(w: World, e: Entity): Entity | undefined {
     const dx = o.x - e.x, dy = o.y - e.y;
     const d2 = dx * dx + dy * dy;
     if (d2 < bestD) { bestD = d2; best = o; }
+  }
+  return best;
+}
+
+const CROWD_PENALTY = 70 * FP; // how much further a busy deposit "feels"
+
+/** Pick something to mine. Distance matters, but so does how many crew are
+ *  already committed to that deposit — the count is the stigmergic signal, and
+ *  it spreads the crew out instead of stacking them all on the nearest pile.
+ *  Miners also stay on the resource they were already on, so a pixel crew does
+ *  not quietly collapse into a bit crew after one delivery. */
+function pickNode(w: World, e: Entity, prefer: Res | null): Entity | undefined {
+  const load = new Map<number, number>();
+  for (const o of w.entities) {
+    if (o.owner !== e.owner || o.kind !== "engineer" || o.id === e.id) continue;
+    if (o.order.kind !== "harvest") continue;
+    load.set(o.order.target, (load.get(o.order.target) ?? 0) + 1);
+  }
+  let best: Entity | undefined;
+  let bestScore = Infinity;
+  for (const pass of prefer && w.spread ? [prefer, null] : [null]) {
+    for (const c of w.entities) {
+      const res = nodeRes(c.kind);
+      if (!res || c.amount <= 0) continue;
+      if (pass && res !== pass) continue;
+      const dx = c.x - e.x, dy = c.y - e.y;
+      const score = isqrt(dx * dx + dy * dy)
+        + (w.spread ? (load.get(c.id) ?? 0) * CROWD_PENALTY : 0);
+      if (score < bestScore) { bestScore = score; best = c; }
+    }
+    if (best) break; // preferred resource wins outright when any is left
   }
   return best;
 }
@@ -710,6 +828,8 @@ function separate(w: World) {
           const d = isqrt(d2) || 1;
           const push = Math.trunc((need - d) / 2) + 1;
           const nx = Math.trunc((dx * push) / d), ny = Math.trunc((dy * push) / d);
+          // Mark where it happened; this is the jam signal everything else reads.
+          w.trails.bump((a.x + o.x) >> 1, (a.y + o.y) >> 1);
           a.x = clamp(a.x - nx, 0, MAP_SIZE); a.y = clamp(a.y - ny, 0, MAP_SIZE);
           o.x = clamp(o.x + nx, 0, MAP_SIZE); o.y = clamp(o.y + ny, 0, MAP_SIZE);
         }

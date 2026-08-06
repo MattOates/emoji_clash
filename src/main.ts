@@ -339,7 +339,12 @@ window.addEventListener("keydown", (ev) => {
   keys.add(k);
 
   if (ev.key === "Escape") { placing = null; attackMoveArmed = false; selection.clear(); syncCard(); return; }
-  if (ev.key === "F1") { ev.preventDefault(); toast("LMB drag · RMB order · A attack-move · D drive · Y gallery · K keyboard · C cloud · X feed · B datacenter · E/F/N/G/W/V train · Ctrl+A all · Ctrl+1-9 group · Space home"); return; }
+  if (k === "t") {
+    renderer.showTrails = !renderer.showTrails;
+    toast(renderer.showTrails ? "Pheromone trails shown." : "Pheromone trails hidden.");
+    return;
+  }
+  if (ev.key === "F1") { ev.preventDefault(); toast("LMB drag · RMB order · A attack-move · D drive · Y gallery · K keyboard · C cloud · X feed · B datacenter · E/F/N/G/W/V train · T trails · Ctrl+A all · Ctrl+1-9 group · Space home"); return; }
   if (k === " ") {
     const home = runner.world.entities.find((e) => e.owner === runner!.me && e.kind === "datacenter");
     if (home) centerOn(home.x / FP, home.y / FP);

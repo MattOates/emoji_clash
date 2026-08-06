@@ -26,8 +26,17 @@ const NEIGH: [number, number, number][] = [
 
 export class PathCache {
   readonly grid = new Uint8Array(G * G);
+  /** Extra per-tile cost from congestion; folded in when a field is flooded. */
+  private congestion: Uint8Array | null = null;
   private fields = new Map<number, Int32Array>();
   private dirty = true;
+
+  /** Routes should bend around jams, so traffic is re-quantised on a slow
+   *  cadence and the cached fields are dropped when it moves. */
+  setCongestion(c: Uint8Array) {
+    this.congestion = c;
+    this.fields.clear();
+  }
 
   /** Buildings appeared or died; the grid and every field are stale. */
   invalidate() { this.dirty = true; }
@@ -54,7 +63,7 @@ export class PathCache {
   private field(goalIdx: number): Int32Array {
     const hit = this.fields.get(goalIdx);
     if (hit) return hit;
-    const f = flood(this.grid, goalIdx);
+    const f = flood(this.grid, goalIdx, this.congestion);
     if (this.fields.size >= MAX_FIELDS) {
       // Insertion-ordered eviction. Fields are a pure function of grid + goal,
       // so what gets evicted can never change the outcome of the game.
@@ -104,7 +113,7 @@ function clampTile(v: number): number {
 /** Dijkstra out from the goal over passable tiles. The goal tile itself is
  *  always expanded even when blocked — you must be able to path to a crystal
  *  patch or to the building you are about to attack. */
-function flood(grid: Uint8Array, goal: number): Int32Array {
+function flood(grid: Uint8Array, goal: number, congestion: Uint8Array | null): Int32Array {
   const dist = new Int32Array(G * G).fill(INF);
   dist[goal] = 0;
   const heapIdx: number[] = [goal];
@@ -156,7 +165,7 @@ function flood(grid: Uint8Array, goal: number): Int32Array {
       const ni = ny * G + nx;
       if (grid[ni]) continue;
       if (dx && dy && (grid[cy * G + nx] || grid[ny * G + cx])) continue;
-      const nd = cd + cost;
+      const nd = cd + cost + (congestion ? congestion[ni]! : 0);
       if (nd >= dist[ni]!) continue;
       dist[ni] = nd;
       push(ni, nd);
