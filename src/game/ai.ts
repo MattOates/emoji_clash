@@ -25,7 +25,8 @@ export function aiCommands(w: World, me: number): Command[] {
   const clouds = of("cloud").filter((b) => b.complete);
   const feeds = of("feed").filter((b) => b.complete);
   const crew = of("engineer");
-  const army = mine.filter((e) => !STATS[e.kind].building && e.kind !== "engineer");
+  const army = mine.filter((e) => !STATS[e.kind].building
+    && e.kind !== "engineer" && e.kind !== "janitor");
   const pl = w.players[me]!;
   const nodes = w.entities.filter((c) => (c.kind === "bitnode" || c.kind === "pixnode") && c.amount > 0);
 
@@ -78,15 +79,17 @@ export function aiCommands(w: World, me: number): Command[] {
   }
   if (!saving) for (const b of keyboards) {
     if (!b.complete) continue;
-    const roll = ((w.tick / 10) | 0) % 5;
+    const roll = ((w.tick / 10) | 0) % 6;
     const kind: Kind = roll === 0 ? "guard" : roll === 1 ? "ninja"
-      : roll === 2 && affordable(pl, STATS.wizard.cost) ? "wizard"
-      : roll === 3 && affordable(pl, STATS.vampire.cost) ? "vampire" : "face";
+      : roll === 2 && affordable(pl, STATS.monkey.cost) ? "monkey"
+      : roll === 3 && affordable(pl, STATS.wizard.cost) ? "wizard"
+      : roll === 4 && affordable(pl, STATS.vampire.cost) ? "vampire" : "face";
     out.push({ c: "train", ids: [b.id], kind });
   }
 
   // Radicalise a smiley whenever there is slop to spare.
   const enrolling = new Set<number>();
+  const fouling = new Set<number>();
   if (feeds.length && feeds[0]!.stockSlop >= 1) {
     const calm = mine.filter((e) => e.kind === "face" && e.level < MAX_LEVEL && e.order.kind === "idle");
     if (calm.length) {
@@ -112,8 +115,25 @@ export function aiCommands(w: World, me: number): Command[] {
     }
   }
 
+  // Somebody has to clean up. Keep one Janitor per two foulings on our side.
+  const mess = w.entities.filter((m) => m.kind === "dung");
+  const janitors = of("janitor");
+  if (centres.length && mess.length > janitors.length * 2 && janitors.length < 4) {
+    out.push({ c: "train", ids: centres.map((b) => b.id), kind: "janitor" });
+  }
+
+  // Monkeys foul whatever the enemy is walking over most.
+  const monkeys = mine.filter((e) => e.kind === "monkey" && e.order.kind === "idle" && e.progress <= 0);
+  if (monkeys.length && foes.length) {
+    const depot = foes.find((f) => f.kind === "drive" || f.kind === "gallery");
+    if (depot) {
+      out.push({ c: "dung", ids: [monkeys[0]!.id], x: depot.x + 60 * FP, y: depot.y + 60 * FP });
+      fouling.add(monkeys[0]!.id);
+    }
+  }
+
   // Attack once there is a critical mass; otherwise hold near home.
-  const idleArmy = army.filter((a) => a.order.kind === "idle" && !enrolling.has(a.id)
+  const idleArmy = army.filter((a) => a.order.kind === "idle" && !enrolling.has(a.id) && !fouling.has(a.id)
     && !(a.kind === "face" && a.level > 0 && a.level < MAX_LEVEL));
   if (army.length >= 7 && idleArmy.length) {
     const hit = foes.find((f) => f.kind === "datacenter") ?? foes.find((f) => STATS[f.kind].building) ?? foes[0];

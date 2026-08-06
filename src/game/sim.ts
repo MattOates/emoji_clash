@@ -1,6 +1,6 @@
 import {
   FP, TILE, MAP_TILES, MAP_SIZE, STATS, IDLE, MAX_LEVEL, BLAST_RADIUS, BLAST_DAMAGE,
-  affordable, pay, faceHp, faceDamage,
+  affordable, pay, faceHp, faceDamage, MUCK_SLOW, DUNG_COOLDOWN, CLEAN_TICKS,
   type Command, type Entity, type Kind, type Player, type Res,
 } from "./types";
 import { PathCache } from "./flow";
@@ -47,7 +47,8 @@ export interface World {
   entities: Entity[]; // always sorted by id
   byId: Map<number, Entity>;
   players: [Player, Player];
-  events: { x: number; y: number; kind: string; text?: string }[]; // render-only
+  // Render-only. x2/y2 carry the far end of a projectile arc.
+  events: { x: number; y: number; kind: string; text?: string; x2?: number; y2?: number }[];
   winner: number; // -1 while undecided
   paths: PathCache; // derived from the entities; never part of the checksum
   trails: Trails; // pheromone laid by carriers; feeds movement, so it is sim state
@@ -151,15 +152,48 @@ function recomputeSupply(w: World) {
   }
 }
 
+/** Re-rasterise foulings and push the result into routing costs. Cheap, and
+ *  only runs when a fouling actually appears or disappears. */
+function refreshMuck(w: World) {
+  w.trails.muck.fill(0);
+  for (const e of w.entities) {
+    if (e.kind !== "dung" || e.hp <= 0) continue;
+    const r = STATS.dung.radius;
+    const cell = TILE * FP;
+    const lo = (v: number) => Math.max(0, Math.floor((v - r) / cell));
+    const hi = (v: number) => Math.min(MAP_TILES - 1, Math.floor((v + r) / cell));
+    for (let ty = lo(e.y); ty <= hi(e.y); ty++) {
+      for (let tx = lo(e.x); tx <= hi(e.x); tx++) w.trails.muck[ty * MAP_TILES + tx] = 1;
+    }
+  }
+  w.trails.refreshCongestion();
+  w.paths.setCongestion(w.trails.congestion);
+}
+
+function fouled(w: World, x: number, y: number): boolean {
+  const i = Math.floor(y / (TILE * FP)) * MAP_TILES + Math.floor(x / (TILE * FP));
+  return i >= 0 && i < w.trails.muck.length && w.trails.muck[i] === 1;
+}
+
+/** Everything slows to a crawl crossing a fouling — including whoever put it
+ *  there. That is what makes it a real cost rather than free area denial. */
+function speedOf(w: World, e: Entity): number {
+  const base = STATS[e.kind].speed;
+  return fouled(w, e.x, e.y) ? Math.max(1, Math.trunc((base * MUCK_SLOW) / 100)) : base;
+}
+
 export function canTrain(building: Kind, unit: Kind): boolean {
-  if (building === "datacenter") return unit === "engineer";
-  if (building === "keyboard") return unit === "face" || unit === "ninja" || unit === "guard" || unit === "wizard" || unit === "vampire";
+  if (building === "datacenter") return unit === "engineer" || unit === "janitor";
+  if (building === "keyboard") {
+    return unit === "face" || unit === "ninja" || unit === "guard"
+      || unit === "monkey" || unit === "wizard" || unit === "vampire";
+  }
   return false;
 }
 
 export function trainableAt(building: Kind): Kind[] {
-  if (building === "datacenter") return ["engineer"];
-  if (building === "keyboard") return ["face", "ninja", "guard", "wizard", "vampire"];
+  if (building === "datacenter") return ["engineer", "janitor"];
+  if (building === "keyboard") return ["face", "ninja", "guard", "monkey", "wizard", "vampire"];
   return [];
 }
 
@@ -257,6 +291,13 @@ export function applyCommand(w: World, owner: number, cmd: Command) {
       }
       break;
     }
+    case "dung": {
+      const monkeys = cmd.ids.map(mine).filter((e): e is Entity => !!e && e.kind === "monkey");
+      formation(monkeys, cmd.x, cmd.y, (e, x, y) => {
+        e.order = { kind: "dung", x, y, target: 0, build: null };
+      });
+      break;
+    }
     case "detonate": {
       for (const id of cmd.ids) {
         const e = mine(id);
@@ -293,6 +334,11 @@ function contextOrder(e: Entity, t: Entity, owner: number) {
     }
     if (e.kind === "face" && t.kind === "feed" && t.complete) return { kind: "enroll" as const, ...at };
     return { kind: "move" as const, x: t.x, y: t.y, target: 0, build: null };
+  }
+  if (t.kind === "dung") {
+    return e.kind === "janitor"
+      ? { kind: "clean" as const, ...at }
+      : { kind: "move" as const, x: t.x, y: t.y, target: 0, build: null };
   }
   if (t.owner >= 0) return { kind: "attack" as const, ...at };
   return { kind: "move" as const, x: t.x, y: t.y, target: 0, build: null };
@@ -334,6 +380,7 @@ export function step(w: World, cmds: { owner: number; cmd: Command }[]) {
 
   // Reap the dead in id order, so both peers remove the same things.
   let dirty = false;
+  let muckDirty = false;
   for (let i = w.entities.length - 1; i >= 0; i--) {
     const e = w.entities[i]!;
     if (e.hp > 0 && !(nodeRes(e.kind) && e.amount <= 0)) continue;
@@ -342,13 +389,15 @@ export function step(w: World, cmds: { owner: number; cmd: Command }[]) {
     w.entities.splice(i, 1);
     w.byId.delete(e.id);
     if (STATS[e.kind].building) w.paths.invalidate();
+    if (e.kind === "dung") muckDirty = true;
     dirty = true;
   }
   if (dirty) recomputeSupply(w);
+  if (muckDirty) refreshMuck(w);
 
   if (w.winner < 0) {
     const alive = [false, false];
-    for (const e of w.entities) if (e.owner >= 0) alive[e.owner] = true;
+    for (const e of w.entities) if (e.owner >= 0 && e.kind !== "dung") alive[e.owner] = true;
     if (!alive[0] && !alive[1]) w.winner = 2;
     else if (!alive[0]) w.winner = 1;
     else if (!alive[1]) w.winner = 0;
@@ -398,10 +447,26 @@ function stepBuilding(w: World, b: Entity) {
 function stepUnit(w: World, e: Entity) {
   const s = STATS[e.kind];
   const o = e.order;
+  const spd = speedOf(w, e);
+  if (e.kind === "monkey" && e.progress > 0) e.progress--; // dung cooldown
 
   switch (o.kind) {
     case "idle":
     case "attackMove": {
+      if (e.kind === "janitor") {
+        // Only local mess; a Janitor should not march across the map on its own.
+        const reach = 900 * FP;
+        const mess = nearest(w, e, (m) => {
+          if (m.kind !== "dung" || m.hp <= 0) return false;
+          const dx = m.x - e.x, dy = m.y - e.y;
+          return dx * dx + dy * dy <= reach * reach;
+        });
+        if (mess) e.order = { kind: "clean", x: mess.x, y: mess.y, target: mess.id, build: null };
+        else if (o.kind === "attackMove" && (moveToward(w, e, o.x, o.y, spd, 6 * FP) || giveUp(e, o.x, o.y))) {
+          e.order = { ...IDLE };
+        }
+        return;
+      }
       const foe = acquire(w, e);
       if (foe) {
         if (o.kind === "idle" && inRange(e, foe, s.range)) { strike(w, e, foe); return; }
@@ -409,19 +474,19 @@ function stepUnit(w: World, e: Entity) {
         return;
       }
       if (o.kind === "attackMove") {
-        if (moveToward(w, e, o.x, o.y, s.speed, 6 * FP) || giveUp(e, o.x, o.y)) e.order = { ...IDLE };
+        if (moveToward(w, e, o.x, o.y, spd, 6 * FP) || giveUp(e, o.x, o.y)) e.order = { ...IDLE };
       }
       return;
     }
     case "move": {
-      if (moveToward(w, e, o.x, o.y, s.speed, 5 * FP) || giveUp(e, o.x, o.y)) e.order = { ...IDLE };
+      if (moveToward(w, e, o.x, o.y, spd, 5 * FP) || giveUp(e, o.x, o.y)) e.order = { ...IDLE };
       return;
     }
     case "attack": {
       const t = w.byId.get(o.target);
       if (!t || t.hp <= 0 || t.owner === e.owner || t.owner < 0) { e.order = { ...IDLE }; return; }
       if (inRange(e, t, s.range)) strike(w, e, t);
-      else moveToward(w, e, t.x, t.y, s.speed, 0, t.id);
+      else moveToward(w, e, t.x, t.y, spd, 0, t.id);
       return;
     }
     case "harvest": {
@@ -437,7 +502,7 @@ function stepUnit(w: World, e: Entity) {
         return;
       }
       if (!inRange(e, node, 6 * FP)) {
-        if (moveToward(w, e, node.x, node.y, s.speed, 0, node.id) || giveUp(e, node.x, node.y)) e.order = { ...IDLE };
+        if (moveToward(w, e, node.x, node.y, spd, 0, node.id) || giveUp(e, node.x, node.y)) e.order = { ...IDLE };
         e.progress = 0;
         return;
       }
@@ -460,7 +525,7 @@ function stepUnit(w: World, e: Entity) {
         o.target = depot.id;
       }
       if (!inRange(e, depot, 8 * FP)) {
-        if (moveToward(w, e, depot.x, depot.y, s.speed, 0, depot.id) || giveUp(e, depot.x, depot.y)) e.order = { ...IDLE };
+        if (moveToward(w, e, depot.x, depot.y, spd, 0, depot.id) || giveUp(e, depot.x, depot.y)) e.order = { ...IDLE };
         return;
       }
       const pl = w.players[e.owner]!;
@@ -480,7 +545,7 @@ function stepUnit(w: World, e: Entity) {
       const b = w.byId.get(o.target);
       if (!b || b.complete || b.owner !== e.owner) { e.order = { ...IDLE }; return; }
       if (!inRange(e, b, BUILD_RANGE)) {
-        if (moveToward(w, e, b.x, b.y, s.speed, 0, b.id) || giveUp(e, b.x, b.y)) e.order = { ...IDLE };
+        if (moveToward(w, e, b.x, b.y, spd, 0, b.id) || giveUp(e, b.x, b.y)) e.order = { ...IDLE };
         return;
       }
       const total = STATS[b.kind].buildTime;
@@ -518,7 +583,7 @@ function stepUnit(w: World, e: Entity) {
           drop = bank;
         }
         if (!inRange(e, drop, 8 * FP)) {
-          if (moveToward(w, e, drop.x, drop.y, s.speed, 0, drop.id) || giveUp(e, drop.x, drop.y)) e.order = { ...IDLE };
+          if (moveToward(w, e, drop.x, drop.y, spd, 0, drop.id) || giveUp(e, drop.x, drop.y)) e.order = { ...IDLE };
           return;
         }
         if (e.cargoRes === "slop") {
@@ -536,9 +601,9 @@ function stepUnit(w: World, e: Entity) {
       if (dest.kind === "feed") {
         // Empty, on Feed duty: find a Cloud with slop to spare.
         const src = nearest(w, e, (b) => b.owner === e.owner && b.kind === "cloud" && b.complete && b.stockSlop > 0);
-        if (!src) { moveToward(w, e, dest.x, dest.y, s.speed, 70 * FP); return; } // loiter by the Feed
+        if (!src) { moveToward(w, e, dest.x, dest.y, spd, 70 * FP); return; } // loiter by the Feed
         if (!inRange(e, src, 8 * FP)) {
-          if (moveToward(w, e, src.x, src.y, s.speed, 0, src.id) || giveUp(e, src.x, src.y)) e.order = { ...IDLE };
+          if (moveToward(w, e, src.x, src.y, spd, 0, src.id) || giveUp(e, src.x, src.y)) e.order = { ...IDLE };
           return;
         }
         const take = Math.min(SLOP_CARGO, src.stockSlop);
@@ -551,7 +616,7 @@ function stepUnit(w: World, e: Entity) {
       // Empty, on Cloud duty. Clearing finished slop beats hauling more input.
       if (dest.stockSlop >= SLOP_CARGO || (dest.stockSlop > 0 && dest.stockBits >= 2 && dest.stockPixels >= 1)) {
         if (!inRange(e, dest, 8 * FP)) {
-          if (moveToward(w, e, dest.x, dest.y, s.speed, 0, dest.id) || giveUp(e, dest.x, dest.y)) e.order = { ...IDLE };
+          if (moveToward(w, e, dest.x, dest.y, spd, 0, dest.id) || giveUp(e, dest.x, dest.y)) e.order = { ...IDLE };
           return;
         }
         const take = Math.min(SLOP_CARGO, dest.stockSlop);
@@ -563,11 +628,11 @@ function stepUnit(w: World, e: Entity) {
       const wantPixels = dest.stockPixels * 2 <= dest.stockBits;
       const want: Res = wantPixels && pl.pixels > 0 ? "pixels" : "bits";
       const store = want === "bits" ? pl.bits : pl.pixels;
-      if (store <= 0) { moveToward(w, e, dest.x, dest.y, s.speed, 60 * FP); return; }
+      if (store <= 0) { moveToward(w, e, dest.x, dest.y, spd, 60 * FP); return; }
       const src = nearest(w, e, (b) => b.owner === e.owner && b.complete && STATS[b.kind].depot === want);
       if (!src) { e.order = { ...IDLE }; return; }
       if (!inRange(e, src, 8 * FP)) {
-        if (moveToward(w, e, src.x, src.y, s.speed, 0, src.id) || giveUp(e, src.x, src.y)) e.order = { ...IDLE };
+        if (moveToward(w, e, src.x, src.y, spd, 0, src.id) || giveUp(e, src.x, src.y)) e.order = { ...IDLE };
         return;
       }
       const take = Math.min(CARGO_SIZE, store);
@@ -576,13 +641,42 @@ function stepUnit(w: World, e: Entity) {
       e.cargoRes = want;
       return;
     }
+    case "dung": {
+      if (e.kind !== "monkey") { e.order = { ...IDLE }; return; }
+      if (moveToward(w, e, o.x, o.y, spd, 10 * FP) || giveUp(e, o.x, o.y)) {
+        if (e.progress <= 0) {
+          const d = makeEntity(w, "dung", e.owner, e.x, e.y);
+          d.hp = STATS.dung.hp;
+          e.progress = DUNG_COOLDOWN;
+          w.events.push({ x: d.x, y: d.y, kind: "float", text: "💩" });
+          refreshMuck(w);
+        }
+        e.order = { ...IDLE };
+      }
+      return;
+    }
+    case "clean": {
+      if (e.kind !== "janitor") { e.order = { ...IDLE }; return; }
+      const muck = w.byId.get(o.target);
+      if (!muck || muck.kind !== "dung" || muck.hp <= 0) { e.order = { ...IDLE }; e.progress = 0; return; }
+      if (!inRange(e, muck, 8 * FP)) {
+        if (moveToward(w, e, muck.x, muck.y, spd, 0, muck.id) || giveUp(e, muck.x, muck.y)) e.order = { ...IDLE };
+        e.progress = 0;
+        return;
+      }
+      if (++e.progress < CLEAN_TICKS) return;
+      e.progress = 0;
+      muck.hp = 0;
+      w.events.push({ x: muck.x, y: muck.y, kind: "float", text: "✨" });
+      return;
+    }
     case "enroll": {
       const feed = w.byId.get(o.target);
       if (!feed || feed.kind !== "feed" || feed.owner !== e.owner || !feed.complete || e.kind !== "face") {
         e.order = { ...IDLE }; return;
       }
       if (e.level >= MAX_LEVEL) { e.order = { ...IDLE }; return; }
-      if (!inRange(e, feed, 10 * FP)) { moveToward(w, e, feed.x, feed.y, s.speed, 0, feed.id); e.progress = 0; return; }
+      if (!inRange(e, feed, 10 * FP)) { moveToward(w, e, feed.x, feed.y, spd, 0, feed.id); e.progress = 0; return; }
       // The slop has to be here, in this building, carried in by somebody.
       if (e.progress === 0 && feed.stockSlop < ENROLL_SLOP) return; // queue and wait
       if (e.progress === 0) feed.stockSlop -= ENROLL_SLOP;
@@ -623,7 +717,12 @@ function strike(w: World, a: Entity, b: Entity) {
   b.hp -= dmg;
   b.flash = 6;
   if (s.lifesteal > 0) a.hp = Math.min(a.maxHp, a.hp + Math.trunc((dmg * s.lifesteal) / 100));
-  w.events.push({ x: b.x, y: b.y, kind: s.range > 60 * FP ? "shot" : "hit" });
+  if (s.projectile) {
+    // Damage already landed; the arc is pure theatre, so it cannot desync.
+    w.events.push({ x: a.x, y: a.y, x2: b.x, y2: b.y, kind: "lob", text: s.projectile });
+  } else {
+    w.events.push({ x: b.x, y: b.y, kind: s.range > 60 * FP ? "shot" : "hit" });
+  }
   // Being shot at pulls idle defenders into the fight.
   if (b.order.kind === "idle" && !STATS[b.kind].building && b.owner >= 0) {
     b.order = { kind: "attack", x: a.x, y: a.y, target: a.id, build: null };
@@ -793,7 +892,7 @@ function acquire(w: World, e: Entity): Entity | undefined {
   let best: Entity | undefined;
   let bestD = leash * leash + 1;
   for (const o of w.entities) {
-    if (o.owner < 0 || o.owner === e.owner || o.hp <= 0) continue;
+    if (o.owner < 0 || o.owner === e.owner || o.hp <= 0 || o.kind === "dung") continue;
     const dx = o.x - e.x, dy = o.y - e.y;
     const d2 = dx * dx + dy * dy;
     if (d2 < bestD) { bestD = d2; best = o; }

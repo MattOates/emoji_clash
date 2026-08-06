@@ -1,4 +1,4 @@
-import { MAP_TILES, TILE, FP, type Res } from "./types";
+import { MAP_TILES, TILE, FP, MUCK_COST, type Res } from "./types";
 
 // Stigmergy: carriers leave pheromone on the ground and read what others left.
 //
@@ -53,6 +53,9 @@ export class Trails {
   readonly friction = new Int32Array(G * G);
   /** Quantised congestion actually baked into the current flow fields. */
   readonly congestion = new Uint8Array(G * G);
+  /** Tiles fouled by a Monkey. Unlike friction this does not evaporate — it
+   *  sits there ruining the route until somebody scrubs it off. */
+  readonly muck = new Uint8Array(G * G);
 
   static tileOf(x: number, y: number): number {
     const tx = Math.floor(x / CELL), ty = Math.floor(y / CELL);
@@ -111,7 +114,8 @@ export class Trails {
   refreshCongestion(): boolean {
     let changed = false;
     for (let i = 0; i < this.friction.length; i++) {
-      const v = Math.min(CONGEST_MAX, this.friction[i]! >> CONGEST_SHIFT);
+      const v = Math.min(255, (this.friction[i]! >> CONGEST_SHIFT > CONGEST_MAX
+        ? CONGEST_MAX : this.friction[i]! >> CONGEST_SHIFT) + (this.muck[i] ? MUCK_COST : 0));
       if (v !== this.congestion[i]) { this.congestion[i] = v; changed = true; }
     }
     return changed;

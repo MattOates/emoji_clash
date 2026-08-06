@@ -14,11 +14,13 @@ export const TPS = 1000 / TICK_MS;
 
 export type Kind =
   // units
-  | "engineer" | "face" | "ninja" | "guard" | "wizard" | "vampire"
+  | "engineer" | "janitor" | "face" | "ninja" | "guard" | "wizard" | "vampire" | "monkey"
   // structures
   | "datacenter" | "drive" | "gallery" | "cloud" | "keyboard" | "feed"
   // neutral deposits
-  | "bitnode" | "pixnode";
+  | "bitnode" | "pixnode"
+  // hazards
+  | "dung";
 
 export type Res = "bits" | "pixels" | "slop";
 
@@ -31,6 +33,12 @@ export const FACE_FACES = ["🙂", "😐", "🙁", "😠", "😡"];
 export const MAX_LEVEL = 4;
 export const BLAST_RADIUS = 78; // world pixels
 export const BLAST_DAMAGE = 70;
+
+/** A fouled tile is this percentage of normal speed to cross. */
+export const MUCK_SLOW = 42;
+export const MUCK_COST = 22; // extra Dijkstra cost, so routes prefer to go around
+export const DUNG_COOLDOWN = 160; // ticks a Monkey needs between droppings
+export const CLEAN_TICKS = 44; // how long a Janitor scrubs
 
 export interface Stats {
   hp: number;
@@ -47,6 +55,7 @@ export interface Stats {
   hotkey: string;
   emoji: string;
   blurb: string;
+  projectile: string; // emoji lobbed at the target; "" for melee
   depot: Res | null; // harvesters may unload this resource here
   solid: boolean; // blocks movement and gets routed around
   lifesteal: number; // percent of damage dealt returned as health
@@ -59,7 +68,7 @@ const sec = (n: number) => Math.round(n * TPS);
 const base = {
   hp: 100, radius: px(9), speed: px(1.3), damage: 0, range: 0, cooldown: 0,
   cost: cost(0), buildTime: sec(10), building: false, sight: px(190),
-  label: "", hotkey: "", emoji: "", blurb: "", depot: null, solid: false, lifesteal: 0, supply: 0,
+  label: "", hotkey: "", emoji: "", blurb: "", projectile: "", depot: null, solid: false, lifesteal: 0, supply: 0,
 } satisfies Stats;
 
 export const STATS: Record<Kind, Stats> = {
@@ -67,6 +76,11 @@ export const STATS: Record<Kind, Stats> = {
     ...base, hp: 45, radius: px(9), speed: px(1.5), damage: 4, range: px(12), cooldown: 12,
     cost: cost(50), buildTime: sec(10), sight: px(170),
     label: "Engineer", hotkey: "E", emoji: "🧑‍🔧", blurb: "mines, builds, hauls",
+  },
+  janitor: {
+    ...base, hp: 70, radius: px(9), speed: px(1.55), damage: 0, range: 0, cooldown: 0,
+    cost: cost(60, 10), buildTime: sec(9), sight: px(200),
+    label: "Janitor", hotkey: "J", emoji: "🧹", blurb: "scrubs 💩 off the map",
   },
   face: {
     ...base, hp: 100, radius: px(9), speed: px(1.3), damage: 8, range: px(14), cooldown: 14,
@@ -85,8 +99,13 @@ export const STATS: Record<Kind, Stats> = {
   },
   wizard: {
     ...base, hp: 60, radius: px(9), speed: px(1.1), damage: 17, range: px(150), cooldown: 26,
-    cost: cost(90, 60, 2), buildTime: sec(15), sight: px(260),
+    cost: cost(90, 60, 2), buildTime: sec(15), sight: px(260), projectile: "✨",
     label: "Wizard", hotkey: "W", emoji: "🧙", blurb: "outranges everything",
+  },
+  monkey: {
+    ...base, hp: 65, radius: px(9), speed: px(1.6), damage: 7, range: px(92), cooldown: 16,
+    cost: cost(70, 25), buildTime: sec(11), sight: px(225), projectile: "💩",
+    label: "Monkey", hotkey: "M", emoji: "🐒", blurb: "throws 💩 — and can leave it lying about",
   },
   vampire: {
     ...base, hp: 115, radius: px(9), speed: px(1.45), damage: 12, range: px(15), cooldown: 13,
@@ -125,6 +144,10 @@ export const STATS: Record<Kind, Stats> = {
     blurb: "sours 🙂 one step — costs one delivered 🤖 each",
   },
 
+  dung: {
+    ...base, hp: 60, radius: px(14), building: true, sight: 0,
+    label: "Fouling", emoji: "💩", blurb: "slows anything crossing it — needs a 🧹 Janitor",
+  },
   bitnode: {
     ...base, hp: 1, radius: px(15), building: true, sight: 0,
     label: "Bit Cache", emoji: "💾", blurb: "plentiful, quick to mine",
@@ -135,14 +158,16 @@ export const STATS: Record<Kind, Stats> = {
   },
 };
 
-export const UNITS: Kind[] = ["engineer", "face", "ninja", "guard", "wizard", "vampire"];
+export const UNITS: Kind[] = ["engineer", "janitor", "face", "ninja", "guard", "monkey", "wizard", "vampire"];
 export const BUILDABLE: Kind[] = ["drive", "gallery", "keyboard", "cloud", "feed", "datacenter"];
 
 export type OrderKind =
   | "idle" | "move" | "attackMove" | "attack"
   | "harvest" | "returnCargo" | "build"
   | "haul" // shuttling bits and pixels from depots into a Cloud
-  | "enroll"; // walking into a Social Feed to be made angrier
+  | "enroll" // walking into a Social Feed to be made angrier
+  | "dung" // a Monkey walking somewhere to foul it
+  | "clean"; // a Janitor walking to a fouling to scrub it away
 
 export interface Order {
   kind: OrderKind;
@@ -194,6 +219,7 @@ export type Command =
   | { c: "rally"; ids: number[]; x: number; y: number }
   | { c: "cancel"; ids: number[] }
   | { c: "detonate"; ids: number[] }
+  | { c: "dung"; ids: number[]; x: number; y: number }
   | { c: "stop"; ids: number[] };
 
 export interface Player {

@@ -139,10 +139,11 @@ brighter on the laden side, red where units keep colliding.
 | Drag / click | select (double-click picks all of that type on screen) |
 | Right-click | contextual order: move, attack, mine, deliver, haul, enrol, set rally |
 | `A` | attack-move (then left-click a destination) |
-| `E` `F` `N` `G` `W` `V` | train Engineer · Smiley · Ninja · Guard · Wizard · Vampire |
+| `E` `J` `F` `N` `G` `M` `W` `V` | train Engineer · Janitor · Smiley · Ninja · Guard · Monkey · Wizard · Vampire |
 | `D` `Y` `K` `C` `X` `B` | place Drive · Gallery · Keyboard · Cloud · Social Feed · Datacenter |
 | `Ctrl`/`Cmd`+`A` | select every unit of yours on screen |
 | `Ctrl`+`1-9` / `1-9` | assign / recall a control group |
+| `P` | Monkey: foul the ground you click |
 | `T` | show/hide the pheromone trails |
 | `Esc` | cancel a pending attack-move or placement |
 | Arrows, middle-drag, minimap | pan · wheel zooms · `Space` jumps home |
@@ -167,8 +168,22 @@ depot means that resource stops arriving until you rebuild one.
 ### The army
 
 **⌨️ A Keyboard** types fighters into existence: 🙂 Smiley (cheap melee),
-🥷 Ninja (fast, fragile, high damage), 💂 Guard (a slow wall), 🧙 Wizard
-(outranges everything), 🧛 Vampire (heals for half the damage it deals).
+🥷 Ninja (fast, fragile, high damage), 💂 Guard (a slow wall), 🐒 Monkey, 🧙 Wizard
+(outranges everything, throws ✨), 🧛 Vampire (heals for half the damage it deals).
+The 🏢 Datacenter also makes 🧹 Janitors.
+
+**🐒 The Monkey** is a disruption unit, not a damage dealer. It lobs 💩 at enemies
+from range like any skirmisher, but its real job is `P` — **fouling ground**. It
+leaves a 💩 lying wherever you click, on a 8-second cooldown, and a fouled tile:
+
+- slows *anything* crossing it to 42% speed, including your own units
+- costs enough extra in the flow field that routes prefer to go around
+- blocks construction on that spot
+
+Drop a few across an opponent's Drive run and their whole economy staggers.
+Nothing removes it on its own — no decay, no timer. The only counter is a
+🧹 **Janitor**, who scrubs a fouling away in about two seconds and will hunt down
+any mess within range of itself without being told.
 
 **📱 A Social Feed** is where Smileys go to lose their temper — but it cannot
 conjure slop any more than the Cloud can. Put an Engineer on the Feed and they

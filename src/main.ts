@@ -96,6 +96,7 @@ const selection = new Set<number>();
 const groups = new Map<number, number[]>();
 let placing: Kind | null = null;
 let attackMoveArmed = false;
+let dungArmed = false;
 let hover: Entity | undefined;
 let drag: { x0: number; y0: number; x1: number; y1: number; moved: boolean } | null = null;
 let panning: { x: number; y: number } | null = null;
@@ -211,6 +212,7 @@ canvas.addEventListener("pointerdown", (ev) => {
 
   if (ev.button === 2) {
     if (placing) { placing = null; return; }
+    if (dungArmed) { dungArmed = false; return; }
     attackMoveArmed = false;
     order(w.x, w.y, pick(runner.world, w.x, w.y));
     return;
@@ -224,6 +226,13 @@ canvas.addEventListener("pointerdown", (ev) => {
     if (!siteClear(runner.world, w.x, w.y, STATS[placing].radius)) { toast("Blocked — pick clearer ground."); return; }
     issue({ c: "build", ids: crew.map((e) => e.id), kind: placing, x: w.x, y: w.y });
     if (!ev.shiftKey) placing = null;
+    return;
+  }
+
+  if (dungArmed) {
+    const monkeys = selectedUnits().filter((e) => e.kind === "monkey");
+    if (monkeys.length) issue({ c: "dung", ids: monkeys.map((e) => e.id), x: w.x, y: w.y });
+    if (!ev.shiftKey) dungArmed = false;
     return;
   }
 
@@ -254,7 +263,7 @@ canvas.addEventListener("pointermove", (ev) => {
     drag.x1 = sx; drag.y1 = sy;
     if (Math.abs(drag.x1 - drag.x0) + Math.abs(drag.y1 - drag.y0) > 5) drag.moved = true;
   }
-  canvas.style.cursor = placing || attackMoveArmed ? "cell"
+  canvas.style.cursor = placing || attackMoveArmed || dungArmed ? "cell"
     : hover && hover.owner >= 0 && hover.owner !== runner.me ? "not-allowed" : "crosshair";
 });
 
@@ -338,13 +347,13 @@ window.addEventListener("keydown", (ev) => {
   const k = ev.key.toLowerCase();
   keys.add(k);
 
-  if (ev.key === "Escape") { placing = null; attackMoveArmed = false; selection.clear(); syncCard(); return; }
+  if (ev.key === "Escape") { placing = null; attackMoveArmed = false; dungArmed = false; selection.clear(); syncCard(); return; }
   if (k === "t") {
     renderer.showTrails = !renderer.showTrails;
     toast(renderer.showTrails ? "Pheromone trails shown." : "Pheromone trails hidden.");
     return;
   }
-  if (ev.key === "F1") { ev.preventDefault(); toast("LMB drag · RMB order · A attack-move · D drive · Y gallery · K keyboard · C cloud · X feed · B datacenter · E/F/N/G/W/V train · T trails · Ctrl+A all · Ctrl+1-9 group · Space home"); return; }
+  if (ev.key === "F1") { ev.preventDefault(); toast("LMB drag · RMB order · A attack-move · D drive · Y gallery · K keyboard · C cloud · X feed · B datacenter · E/F/N/G/W/V train · P foul ground · T trails · Ctrl+A all · Ctrl+1-9 group · Space home"); return; }
   if (k === " ") {
     const home = runner.world.entities.find((e) => e.owner === runner!.me && e.kind === "datacenter");
     if (home) centerOn(home.x / FP, home.y / FP);
@@ -364,6 +373,7 @@ window.addEventListener("keydown", (ev) => {
       if (g) {
         placing = null;
         attackMoveArmed = false;
+        dungArmed = false;
         selection.clear();
         for (const id of g) if (runner.world.byId.has(id)) selection.add(id);
         syncCard();
@@ -380,6 +390,7 @@ window.addEventListener("keydown", (ev) => {
     ev.preventDefault();
     placing = null;
     attackMoveArmed = false;
+    dungArmed = false;
     selection.clear();
     for (const e of runner.world.entities)
       if (e.owner === runner.me && !STATS[e.kind].building && onScreen(e)) selection.add(e.id);
@@ -400,7 +411,10 @@ window.addEventListener("keydown", (ev) => {
     return;
   }
 
-  if (k === "a" && selectedUnits().length) { attackMoveArmed = !attackMoveArmed; placing = null; return; }
+  if (k === "p" && selectedUnits().some((e) => e.kind === "monkey")) {
+    dungArmed = !dungArmed; attackMoveArmed = false; placing = null; return;
+  }
+  if (k === "a" && selectedUnits().length) { attackMoveArmed = !attackMoveArmed; dungArmed = false; placing = null; return; }
   if (selectedUnits().some((e) => e.kind === "engineer")) {
     const site = BUILDABLE.find((kind) => STATS[kind].hotkey.toLowerCase() === k);
     if (site) { placing = placing === site ? null : site; attackMoveArmed = false; return; }
@@ -458,11 +472,14 @@ function syncCard() {
 
   // These arm a mode rather than acting immediately, so they toggle: clicking
   // again backs out instead of leaving the next click booby-trapped.
-  const arm = (kind: Kind) => { placing = placing === kind ? null : kind; attackMoveArmed = false; };
+  const arm = (kind: Kind) => { placing = placing === kind ? null : kind; attackMoveArmed = false; dungArmed = false; };
   if (sel.some((e) => e.kind === "engineer")) {
     for (const kind of BUILDABLE) {
       add(`${STATS[kind].emoji} ${STATS[kind].label} [${STATS[kind].hotkey}]`, costText(STATS[kind].cost), () => arm(kind));
     }
+  }
+  if (sel.some((e) => e.kind === "monkey")) {
+    add("💩 Foul ground [P]", "slows any crossing", () => { dungArmed = !dungArmed; placing = null; attackMoveArmed = false; });
   }
   if (sel.some((e) => e.kind === "face" && e.level < MAX_LEVEL)) {
     add("📱 Send to Feed", `${ENROLL_SLOP}🤖 per level`, () => toast("Right-click a 📱 Social Feed — it must have 🤖 slop carried in first."));
@@ -472,7 +489,7 @@ function syncCard() {
       issue({ c: "detonate", ids: sel.filter((e) => e.kind === "face" && e.level >= MAX_LEVEL).map((e) => e.id) }));
   }
   if (sel.some((e) => !STATS[e.kind].building)) {
-    add("Attack [A]", "move & engage", () => { attackMoveArmed = !attackMoveArmed; placing = null; });
+    add("Attack [A]", "move & engage", () => { attackMoveArmed = !attackMoveArmed; placing = null; dungArmed = false; });
     add("Stop [S]", "hold position", () => issue({ c: "stop", ids: selectedUnits().map((e) => e.id) }));
   }
 }
@@ -564,8 +581,9 @@ function frame(now: number) {
       ? "practice vs AI"
       : `${me === 0 ? "host" : "guest"} · ${runner.rtt}ms · t${world.tick}`;
   const modeEl = $("mode");
-  modeEl.classList.toggle("hidden", !placing && !attackMoveArmed);
+  modeEl.classList.toggle("hidden", !placing && !attackMoveArmed && !dungArmed);
   if (placing) modeEl.innerHTML = `<b>PLACING ${STATS[placing].label.toUpperCase()}</b> — click a site · right-click or Esc to cancel`;
+  else if (dungArmed) modeEl.innerHTML = "<b>FOUL GROUND 💩</b> — click where to leave it · right-click or Esc to cancel";
   else if (attackMoveArmed) modeEl.innerHTML = "<b>ATTACK-MOVE</b> — click a destination · right-click or Esc to cancel";
 
   const warn = runner.desync

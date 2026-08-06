@@ -15,7 +15,7 @@ export const COLORS = [
 ];
 const NEUTRAL = { body: "#c58bff", dark: "#4a2a70", glow: "rgba(197,139,255,0.4)", name: "Neutral" };
 
-interface Puff { x: number; y: number; life: number; max: number; kind: string; text?: string }
+interface Puff { x: number; y: number; life: number; max: number; kind: string; text?: string; x2?: number; y2?: number; spin?: number }
 
 // Emoji are colour glyphs — fillStyle does nothing to them — so team identity
 // comes from the ring behind, and each glyph is rasterised once and blitted
@@ -75,11 +75,14 @@ export class Renderer {
     this.trailCanvas.width = this.trailCanvas.height = MAP_TILES;
   }
 
-  addEvents(events: { x: number; y: number; kind: string; text?: string }[]) {
+  addEvents(events: { x: number; y: number; kind: string; text?: string; x2?: number; y2?: number }[]) {
     for (const e of events) {
       const max = e.kind === "blast" ? 34 : e.kind === "death" ? 26
-        : e.kind === "built" || e.kind === "levelup" ? 34 : e.kind === "float" ? 40 : 14;
-      this.puffs.push({ x: e.x / FP, y: e.y / FP, life: max, max, kind: e.kind, text: e.text });
+        : e.kind === "built" || e.kind === "levelup" ? 34 : e.kind === "float" ? 40
+        : e.kind === "lob" ? 13 : 14;
+      const p: Puff = { x: e.x / FP, y: e.y / FP, life: max, max, kind: e.kind, text: e.text };
+      if (e.x2 !== undefined) { p.x2 = e.x2 / FP; p.y2 = e.y2! / FP; p.spin = (this.puffs.length % 2) ? 1 : -1; }
+      this.puffs.push(p);
     }
     if (this.puffs.length > 400) this.puffs.splice(0, this.puffs.length - 400);
   }
@@ -285,6 +288,29 @@ export class Renderer {
       const k = p.life / p.max;
       ctx.globalAlpha = k;
       switch (p.kind) {
+        case "lob": {
+          // A thrown thing should look thrown: parabola, tumble, splat.
+          const prog = 1 - k;
+          const x = p.x + (p.x2! - p.x) * prog;
+          const y = p.y + (p.y2! - p.y) * prog;
+          const span = Math.hypot(p.x2! - p.x, p.y2! - p.y);
+          const hop = Math.sin(Math.PI * prog) * Math.min(46, span * 0.3);
+          ctx.globalAlpha = 1;
+          ctx.save();
+          ctx.translate(x, y - hop);
+          ctx.rotate(prog * Math.PI * 2.4 * (p.spin ?? 1));
+          drawGlyph(ctx, p.text ?? "💩", 0, 0, 15);
+          ctx.restore();
+          if (prog > 0.86) {
+            ctx.globalAlpha = (1 - prog) * 7;
+            ctx.strokeStyle = "rgba(180,130,90,0.9)";
+            ctx.lineWidth = 2 / cam.zoom;
+            ctx.beginPath();
+            ctx.arc(p.x2!, p.y2!, (prog - 0.86) * 90, 0, Math.PI * 2);
+            ctx.stroke();
+          }
+          break;
+        }
         case "blast": {
           ctx.strokeStyle = "rgba(255,140,60,0.95)";
           ctx.lineWidth = 3 / cam.zoom;
