@@ -15,6 +15,6 @@
     "vite-plugin-singlefile": "^2.3.0"
   },
   "dependencies": {
-    "peerjs": "^1.5.5"
+    "peerjs": "1.5.2"
   }
 }

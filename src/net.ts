@@ -16,7 +16,7 @@ import Peer, { type DataConnection } from "peerjs";
 // No look-alike characters: these codes get read down phone calls.
 const ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const NAMESPACE = "emojiclash-"; // keeps us out of other apps' id space
-const CONNECT_TIMEOUT = 25000;
+const CONNECT_TIMEOUT = 45000;
 
 export function newRoomCode(): string {
   const r = new Uint8Array(5);
@@ -66,6 +66,35 @@ function wrap(peer: Peer, conn: DataConnection): Net {
   return net;
 }
 
+/** Resolve as soon as the channel is usable.
+ *
+ *  `conn.on("open")` is not safe on its own for an *incoming* connection:
+ *  PeerJS can emit "connection" for a channel that is already open, and the
+ *  open event never fires again, so a host waiting on it waits forever. Check
+ *  the flag first, then fall back to the event. */
+function whenOpen(conn: DataConnection, go: () => void) {
+  if (conn.open) { go(); return; }
+  conn.on("open", go);
+}
+
+/** Narrate the underlying ICE state, which is the only way to tell "the broker
+ *  never introduced us" apart from "we were introduced but cannot reach each
+ *  other". Those need completely different fixes. */
+function traceIce(conn: DataConnection, who: string, log?: (s: string) => void) {
+  if (!log) return;
+  const pc = conn.peerConnection;
+  if (!pc) return;
+  const report = () => {
+    const st = pc.iceConnectionState;
+    if (st === "checking") log(`${who}: introduced, trying to reach each other…`);
+    else if (st === "connected" || st === "completed") log(`${who}: connected.`);
+    else if (st === "failed") log(`${who}: could not reach the other browser — you are behind NATs that need a TURN relay.`);
+    else if (st === "disconnected") log(`${who}: connection lost.`);
+  };
+  pc.addEventListener("iceconnectionstatechange", report);
+  report();
+}
+
 function fail(peer: Peer, err: any): Error {
   peer.destroy();
   const type = err?.type ?? "";
@@ -79,33 +108,43 @@ function fail(peer: Peer, err: any): Error {
 /** Claim a room code and wait for somebody to walk in. */
 export function hostRoom(code: string, log?: (s: string) => void): Promise<Net> {
   return new Promise((resolve, reject) => {
-    const peer = new Peer(NAMESPACE + code);
+    const peer = new Peer(NAMESPACE + code, { debug: 2 });
     let settled = false;
     peer.on("open", () => log?.("Room open — waiting for your opponent…"));
     peer.on("connection", (conn) => {
       if (settled) { conn.close(); return; } // one opponent per room
-      conn.on("open", () => {
+      log?.("Someone is joining…");
+      traceIce(conn, "host", log);
+      whenOpen(conn, () => {
+        if (settled) return;
         settled = true;
+        clearTimeout(giveUp);
         log?.("Opponent connected.");
         resolve(wrap(peer, conn));
       });
+      conn.on("error", (err) => log?.("host: " + String((err as any)?.message ?? err)));
     });
-    peer.on("error", (err) => { if (!settled) reject(fail(peer, err)); });
+    peer.on("error", (err) => { if (!settled) { clearTimeout(giveUp); reject(fail(peer, err)); } });
+    const giveUp = setTimeout(() => {
+      if (!settled) reject(fail(peer, { message: "nobody managed to connect — if they saw the room, you are both behind NATs that need a TURN relay" }));
+    }, 120000);
   });
 }
 
 /** Walk into somebody else's room. */
 export function joinRoom(code: string, log?: (s: string) => void): Promise<Net> {
   return new Promise((resolve, reject) => {
-    const peer = new Peer();
+    const peer = new Peer({ debug: 2 });
     let settled = false;
     const giveUp = setTimeout(() => {
-      if (!settled) reject(fail(peer, { message: "timed out — the host may be behind a NAT that needs a relay" }));
+      if (!settled) reject(fail(peer, { message: "timed out waiting for the channel to open — check the console for PeerJS and ICE lines" }));
     }, CONNECT_TIMEOUT);
     peer.on("open", () => {
       log?.("Found the broker, knocking on the room…");
       const conn = peer.connect(NAMESPACE + code, { reliable: true });
-      conn.on("open", () => {
+      traceIce(conn, "guest", log);
+      whenOpen(conn, () => {
+        if (settled) return;
         settled = true;
         clearTimeout(giveUp);
         log?.("Connected.");
