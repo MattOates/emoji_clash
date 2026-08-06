@@ -52,9 +52,23 @@ function gathered(pc: RTCPeerConnection): Promise<void> {
       resolve();
     };
     pc.addEventListener("icegatheringstatechange", done);
-    // Some networks never finish gathering; ship what we have.
-    setTimeout(() => { pc.removeEventListener("icegatheringstatechange", done); resolve(); }, 4000);
+    // Some networks never finish gathering; ship what we have. Eight seconds
+    // because a slow or partly-blocked STUN server can take longer than four.
+    setTimeout(() => { pc.removeEventListener("icegatheringstatechange", done); resolve(); }, 8000);
   });
+}
+
+/** What kinds of address made it into the description. No `srflx` line means
+ *  STUN never answered, and the code will only ever work on a local network —
+ *  worth saying out loud instead of letting the connection hang. */
+export function candidateKinds(sdp: string): { host: number; srflx: number; relay: number } {
+  const kinds = { host: 0, srflx: 0, relay: 0 };
+  for (const line of sdp.match(/a=candidate:.*/g) ?? []) {
+    if (line.includes(" typ host")) kinds.host++;
+    else if (line.includes(" typ srflx")) kinds.srflx++;
+    else if (line.includes(" typ relay")) kinds.relay++;
+  }
+  return kinds;
 }
 
 export interface Net {
@@ -101,12 +115,28 @@ function wrap(pc: RTCPeerConnection, ch: RTCDataChannel): Net {
 
 export interface HostSession {
   code: string;
+  kinds: ReturnType<typeof candidateKinds>;
   accept(answerCode: string): Promise<void>;
   ready: Promise<Net>;
 }
 
-export async function createHost(useStun: boolean): Promise<HostSession> {
+/** Report ICE progress and give up loudly rather than silently never opening. */
+function watch(pc: RTCPeerConnection, log?: (s: string) => void) {
+  if (!log) return;
+  pc.addEventListener("iceconnectionstatechange", () => {
+    const st = pc.iceConnectionState;
+    if (st === "checking") log("Punching through NAT…");
+    else if (st === "connected" || st === "completed") log("Connected.");
+    else if (st === "failed") {
+      log("Could not reach the other browser. You are probably both behind " +
+          "NATs that need a relay — try again on the same network, or with STUN enabled.");
+    } else if (st === "disconnected") log("Connection dropped.");
+  });
+}
+
+export async function createHost(useStun: boolean, log?: (s: string) => void): Promise<HostSession> {
   const pc = new RTCPeerConnection(useStun ? ICE_WITH_STUN : ICE_LOCAL_ONLY);
+  watch(pc, log);
   const ch = pc.createDataChannel("rts", { ordered: true });
   const ready = new Promise<Net>((resolve) => {
     ch.onopen = () => resolve(wrap(pc, ch));
@@ -115,6 +145,7 @@ export async function createHost(useStun: boolean): Promise<HostSession> {
   await gathered(pc);
   return {
     code: await pack({ t: "offer", sdp: pc.localDescription!.sdp }),
+    kinds: candidateKinds(pc.localDescription!.sdp),
     async accept(answerCode: string) {
       const a = await unpack<{ t: string; sdp: string }>(answerCode);
       if (a.t !== "answer") throw new Error("That is a host code, not a join code.");
@@ -124,18 +155,33 @@ export async function createHost(useStun: boolean): Promise<HostSession> {
   };
 }
 
-export async function createGuest(offerCode: string, useStun: boolean): Promise<{ code: string; ready: Promise<Net> }> {
+export async function createGuest(offerCode: string, useStun: boolean, log?: (s: string) => void):
+    Promise<{ code: string; kinds: ReturnType<typeof candidateKinds>; ready: Promise<Net> }> {
   const o = await unpack<{ t: string; sdp: string }>(offerCode);
   if (o.t !== "offer") throw new Error("That is a join code, not a host code.");
   const pc = new RTCPeerConnection(useStun ? ICE_WITH_STUN : ICE_LOCAL_ONLY);
+  watch(pc, log);
   const ready = new Promise<Net>((resolve) => {
     pc.ondatachannel = (ev) => {
-      ev.channel.onopen = () => resolve(wrap(pc, ev.channel));
-      if (ev.channel.readyState === "open") resolve(wrap(pc, ev.channel));
+      // Wrap exactly once. Wrapping twice installed a second onmessage handler
+      // over the first, while the promise had already resolved with the first
+      // wrapper — so every inbound message went to a handler nobody had set.
+      let wrapped: Net | null = null;
+      const settle = () => {
+        if (wrapped) return;
+        wrapped = wrap(pc, ev.channel);
+        resolve(wrapped);
+      };
+      ev.channel.onopen = settle;
+      if (ev.channel.readyState === "open") settle();
     };
   });
   await pc.setRemoteDescription({ type: "offer", sdp: o.sdp });
   await pc.setLocalDescription(await pc.createAnswer());
   await gathered(pc);
-  return { code: await pack({ t: "answer", sdp: pc.localDescription!.sdp }), ready };
+  return {
+    code: await pack({ t: "answer", sdp: pc.localDescription!.sdp }),
+    kinds: candidateKinds(pc.localDescription!.sdp),
+    ready,
+  };
 }

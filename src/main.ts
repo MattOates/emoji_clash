@@ -29,20 +29,38 @@ function showPane(which: "menu" | "host" | "join") {
 
 $("btnPractice").onclick = () => start("practice", 0, (Math.random() * 2 ** 31) | 0);
 
+/** The invite carries the offer in the URL fragment, so it never reaches a
+ *  server log and needs no server config. The answer still has to come back by
+ *  hand — a URL only travels one way, and WebRTC needs both halves. */
+const inviteLink = (code: string) =>
+  location.origin + location.pathname + "#j=" + encodeURIComponent(code);
+
+function warnAboutCandidates(k: { host: number; srflx: number; relay: number }) {
+  if (k.srflx === 0 && k.relay === 0) {
+    setStatus("Warning: no public address found — STUN did not answer. This link "
+      + "will only work between browsers on the same network.", "err");
+  }
+}
+
 $("btnHost").onclick = async () => {
   showPane("host");
   setStatus("Gathering connection candidates…");
   try {
-    const session = await createHost(stun());
-    $<HTMLTextAreaElement>("hostCode").value = session.code;
-    setStatus("Send that code to your opponent, then paste their reply below.");
+    const session = await createHost(stun(), (m) => setStatus(m));
+    $<HTMLTextAreaElement>("hostCode").value = inviteLink(session.code);
+    setStatus("Send that link to your opponent, then paste the code they send back.");
+    warnAboutCandidates(session.kinds);
     $("hostStart").onclick = async () => {
       const answer = $<HTMLTextAreaElement>("hostAnswer").value.trim();
       if (!answer) return setStatus("Paste the join code first.", "err");
       try {
         setStatus("Connecting…");
         await session.accept(answer);
-        const net = await session.ready;
+        const net = await Promise.race([
+          session.ready,
+          new Promise<never>((_, rej) =>
+            setTimeout(() => rej(new Error("timed out after 30s — the two browsers could not reach each other")), 30000)),
+        ]);
         const seed = (Math.random() * 2 ** 31) | 0;
         net.send({ t: "start", seed });
         start("peer", 0, seed, net);
@@ -57,28 +75,43 @@ $("btnHost").onclick = async () => {
 
 $("btnJoin").onclick = () => showPane("join");
 
-$("joinGo").onclick = async () => {
-  const offer = $<HTMLTextAreaElement>("joinOffer").value.trim();
-  if (!offer) return setStatus("Paste the host code first.", "err");
+async function joinWith(offer: string) {
   try {
-    setStatus("Building your join code…");
-    const guest = await createGuest(offer, stun());
+    setStatus("Building your reply code…");
+    // Anything after #j= may have arrived through a chat client that mangled it.
+    const code = offer.includes("#j=") ? decodeURIComponent(offer.split("#j=")[1]!) : offer;
+    const guest = await createGuest(code, stun(), (m) => setStatus(m));
     $<HTMLTextAreaElement>("joinCode").value = guest.code;
-    setStatus("Send that back to the host. The match starts as soon as they connect.", "ok");
+    setStatus("Send that code back to the host. The match starts when they paste it.", "ok");
+    warnAboutCandidates(guest.kinds);
     const net = await guest.ready;
     setStatus("Connected — waiting for the host to start…", "ok");
     net.onMessage = (msg) => {
       if (msg.t === "start") start("peer", 1, msg.seed, net);
     };
   } catch (err) {
-    setStatus("That code did not parse: " + (err as Error).message, "err");
+    setStatus("That did not work: " + (err as Error).message, "err");
   }
+}
+
+$("joinGo").onclick = () => {
+  const offer = $<HTMLTextAreaElement>("joinOffer").value.trim();
+  if (!offer) return setStatus("Paste the invite link first.", "err");
+  void joinWith(offer);
 };
+
+// Opened via an invite link: skip straight to producing the reply code.
+if (location.hash.startsWith("#j=")) {
+  const code = decodeURIComponent(location.hash.slice(3));
+  showPane("join");
+  $<HTMLTextAreaElement>("joinOffer").value = code;
+  void joinWith(code);
+}
 
 $("hostBack").onclick = () => showPane("menu");
 $("joinBack").onclick = () => showPane("menu");
-$("copyHost").onclick = () => copy($<HTMLTextAreaElement>("hostCode").value, "Host code copied.");
-$("copyJoin").onclick = () => copy($<HTMLTextAreaElement>("joinCode").value, "Join code copied.");
+$("copyHost").onclick = () => copy($<HTMLTextAreaElement>("hostCode").value, "Invite link copied.");
+$("copyJoin").onclick = () => copy($<HTMLTextAreaElement>("joinCode").value, "Reply code copied.");
 
 function copy(text: string, msg: string) {
   navigator.clipboard.writeText(text).then(

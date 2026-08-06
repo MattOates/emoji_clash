@@ -28,15 +28,27 @@ it on a static host, email it to someone — it works the same everywhere.
 
 ## Connecting without a server
 
-Two peers normally need a server to swap SDP descriptions. Here that job is given
-to the players: the host generates a ~600-character code, the guest pastes it in
-and returns a code of their own, and the match begins. Send them over anything —
-chat, email, a photo of a screen. ICE gathering is run to completion before the
-code is produced, so there is no trickle channel to keep alive.
+WebRTC needs a *bidirectional* exchange: the host's offer must reach the guest,
+and the guest's answer must get back to the host. A URL only travels one way, so
+with no rendezvous point there is no return path. A single click-and-play link is
+not something WebRTC can do on its own — it always requires somewhere for the
+answer to land.
 
-The public STUN servers (used only to discover a routable address) can be turned
-off in the menu. With STUN off, nothing outside the two browsers is contacted at
-all, and play works over LAN or on one machine.
+So this goes as far as is possible without one. The host gets an **invite link**
+with the offer in the URL fragment (a fragment, so it never reaches a server log
+and needs no server config). The guest opens it, the page recognises it and
+immediately produces a short **reply code**, which is the one thing that has to
+travel back by hand.
+
+The public STUN servers can be turned off in the menu; with STUN off nothing
+outside the two browsers is contacted at all and play works over LAN. If STUN is
+on but never answers, the menu says so rather than letting the connection hang —
+a code with no public address in it will only ever work on a local network.
+
+**What still fails:** STUN only discovers your public address. If both players
+sit behind NATs that will not accept an inbound punch, the connection needs a
+TURN relay and there is no free reliable public one. That case now reports
+"could not reach the other browser" after 30 seconds instead of hanging.
 
 ## How two browsers stay in agreement
 
