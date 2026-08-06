@@ -107,6 +107,8 @@ export interface Entity {
   queueLeft: number; // ticks left on head of queue
   rallyX: number;
   rallyY: number;
+  stuck: number; // ticks spent making no headway toward the current goal
+  lastD: number; // best distance to that goal so far
   // Render-only interpolation, never read by the simulation.
   px: number;
   py: number;

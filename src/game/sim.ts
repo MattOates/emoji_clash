@@ -2,6 +2,7 @@ import {
   FP, TILE, MAP_TILES, MAP_SIZE, STATS, IDLE,
   type Command, type Entity, type Kind, type Player,
 } from "./types";
+import { PathCache } from "./flow";
 
 // ---------------------------------------------------------------- integer math
 
@@ -45,6 +46,7 @@ export interface World {
   players: [Player, Player];
   events: { x: number; y: number; kind: string }[]; // render-only, cleared each step
   winner: number; // -1 while undecided
+  paths: PathCache; // derived from the entities; never part of the checksum
 }
 
 function makeEntity(w: World, kind: Kind, owner: number, x: number, y: number, complete = true): Entity {
@@ -56,10 +58,12 @@ function makeEntity(w: World, kind: Kind, owner: number, x: number, y: number, c
     order: { ...IDLE }, cooldown: 0, cargo: 0, amount: 0, progress: 0,
     complete, queue: [], queueLeft: 0,
     rallyX: x, rallyY: y + 60 * FP,
+    stuck: 0, lastD: 0,
     px: x, py: y, flash: 0,
   };
   w.entities.push(e);
   w.byId.set(e.id, e);
+  if (s.building) w.paths.invalidate();
   return e;
 }
 
@@ -70,7 +74,7 @@ export function createWorld(seed: number): World {
       { crystals: 300, supply: 0, supplyCap: 0, defeated: false },
       { crystals: 300, supply: 0, supplyCap: 0, defeated: false },
     ],
-    events: [], winner: -1,
+    events: [], winner: -1, paths: new PathCache(),
   };
 
   const t = (n: number) => Math.round(n * TILE * FP); // tiles -> fixed-point, integral
@@ -283,6 +287,7 @@ function formation(units: Entity[], x: number, y: number, set: (e: Entity, x: nu
 export function step(w: World, cmds: { owner: number; cmd: Command }[]) {
   w.events.length = 0;
   for (const { owner, cmd } of cmds) applyCommand(w, owner, cmd);
+  w.paths.refresh(w.entities);
 
   for (const e of w.entities) {
     if (e.hp <= 0 || e.kind === "crystal") continue;
@@ -301,6 +306,7 @@ export function step(w: World, cmds: { owner: number; cmd: Command }[]) {
     w.events.push({ x: e.x, y: e.y, kind: e.kind === "crystal" ? "depleted" : "death" });
     w.entities.splice(i, 1);
     w.byId.delete(e.id);
+    if (STATS[e.kind].building) w.paths.invalidate();
     dirty = true;
   }
   if (dirty) recomputeSupply(w);
@@ -345,12 +351,12 @@ function stepUnit(w: World, e: Entity) {
         return;
       }
       if (o.kind === "attackMove") {
-        if (moveToward(w, e, o.x, o.y, s.speed, 6 * FP)) e.order = { ...IDLE };
+        if (moveToward(w, e, o.x, o.y, s.speed, 6 * FP) || giveUp(e, o.x, o.y)) e.order = { ...IDLE };
       }
       return;
     }
     case "move": {
-      if (moveToward(w, e, o.x, o.y, s.speed, 5 * FP)) e.order = { ...IDLE };
+      if (moveToward(w, e, o.x, o.y, s.speed, 5 * FP) || giveUp(e, o.x, o.y)) e.order = { ...IDLE };
       return;
     }
     case "attack": {
@@ -469,34 +475,58 @@ function blocker(w: World, e: Entity, tx: number, ty: number, ignore: number): E
   return best;
 }
 
-/** Move one step toward a point, sliding around any building in the way.
- *  Without this a unit ordered past a base wedges against it forever: the
- *  step pushes it in, separation pushes it straight back out. */
+function stepBy(e: Entity, dx: number, dy: number, d: number, speed: number) {
+  e.x = clamp(e.x + Math.trunc((dx * speed) / d), 0, MAP_SIZE);
+  e.y = clamp(e.y + Math.trunc((dy * speed) / d), 0, MAP_SIZE);
+}
+
+/** One step toward a point.
+ *
+ *  Open ground is walked in a straight line — that is what looks right and it
+ *  costs nothing. Only when a building actually lies across the path does the
+ *  unit consult the flow field, which routes it around the whole obstruction
+ *  rather than letting it grind along one edge. If even the field cannot reach
+ *  the goal (walled in, or the goal is inside the obstacle) it falls back to
+ *  hugging the obstacle's tangent. */
 function moveToward(w: World, e: Entity, tx: number, ty: number, speed: number, slack: number, ignore = 0): boolean {
   const dx = tx - e.x, dy = ty - e.y;
   const d = isqrt(dx * dx + dy * dy);
   if (d <= slack || d === 0) return true;
 
   const ob = blocker(w, e, tx, ty, ignore);
-  let sx: number, sy: number;
-  if (ob) {
-    // Follow the tangent of the obstacle, on whichever side points more nearly
-    // toward the goal, and drift outward so we do not grind against it.
-    const ox = e.x - ob.x, oy = e.y - ob.y;
-    const od = isqrt(ox * ox + oy * oy) || 1;
-    const dot = -oy * dx + ox * dy;
-    const tanX = dot >= 0 ? -oy : oy;
-    const tanY = dot >= 0 ? ox : -ox;
-    sx = Math.trunc(((tanX * 4 + ox) * speed) / (od * 4));
-    sy = Math.trunc(((tanY * 4 + oy) * speed) / (od * 4));
-  } else {
+  if (!ob) {
     if (d <= speed) { e.x = tx; e.y = ty; return true; }
-    sx = Math.trunc((dx * speed) / d);
-    sy = Math.trunc((dy * speed) / d);
+    stepBy(e, dx, dy, d, speed);
+    return false;
   }
-  e.x = clamp(e.x + sx, 0, MAP_SIZE);
-  e.y = clamp(e.y + sy, 0, MAP_SIZE);
+
+  const wp = w.paths.waypoint(tx, ty, e.x, e.y);
+  if (wp) {
+    const wx = wp.x - e.x, wy = wp.y - e.y;
+    const wd = isqrt(wx * wx + wy * wy);
+    if (wd > 0) { stepBy(e, wx, wy, wd, speed); return false; }
+  }
+
+  const ox = e.x - ob.x, oy = e.y - ob.y;
+  const od = isqrt(ox * ox + oy * oy) || 1;
+  const dot = -oy * dx + ox * dy;
+  const tanX = dot >= 0 ? -oy : oy;
+  const tanY = dot >= 0 ? ox : -ox;
+  e.x = clamp(e.x + Math.trunc(((tanX * 4 + ox) * speed) / (od * 4)), 0, MAP_SIZE);
+  e.y = clamp(e.y + Math.trunc(((tanY * 4 + oy) * speed) / (od * 4)), 0, MAP_SIZE);
   return false;
+}
+
+/** Units that cannot make headway — boxed in, or shoving at a spot another
+ *  unit already occupies — stop instead of grinding there forever. */
+function giveUp(e: Entity, tx: number, ty: number): boolean {
+  const dx = tx - e.x, dy = ty - e.y;
+  const d = isqrt(dx * dx + dy * dy);
+  // A jump in distance means a fresh order rather than a failure to advance.
+  if (e.lastD === 0 || d < e.lastD - FP || d > e.lastD + 4 * FP) {
+    e.lastD = d; e.stuck = 0; return false;
+  }
+  return ++e.stuck > 90; // ~4.5s of no progress
 }
 
 function acquire(w: World, e: Entity): Entity | undefined {

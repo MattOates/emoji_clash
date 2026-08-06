@@ -49,6 +49,23 @@ The simulation is driven by a timer rather than `requestAnimationFrame` — a
 backgrounded tab stops painting, and if it stopped simulating it would freeze the
 opponent too.
 
+## Movement
+
+Obstacles are rasterised onto the 64×64 tile grid and each goal gets a Dijkstra
+flow field flooded out from it, keyed by goal tile — so a squad sent to one place
+shares a single field. Units walk in a straight line while the way is clear and
+only read the field when a building actually lies across their path, which keeps
+open-ground movement looking direct and costs nothing until it matters. Fields
+are cached until a building is created or destroyed.
+
+Unit-versus-unit collision is separate: a tile-bucketed separation pass pushes
+overlapping units apart in id order. Units that make no headway for 4.5 seconds
+stop rather than shoving at an occupied spot forever.
+
+The field is a pure function of the grid and the goal, so caching and eviction
+cannot affect the outcome, and the flood is integer-only with ties broken by tile
+index — a path that differed by one tile between peers would desync the match.
+
 ## Playing
 
 | | |
@@ -73,6 +90,7 @@ opponent owns to win.
 ```
 src/game/types.ts   stats, commands, fixed-point constants
 src/game/sim.ts     the deterministic simulation — integers only
+src/game/flow.ts    obstacle grid and cached flow fields for navigation
 src/game/ai.ts      practice-mode opponent (deterministic, runs inside the sim)
 src/lockstep.ts     turn scheduling, command exchange, checksum comparison
 src/net.ts          WebRTC peer setup and the compressed offer/answer codes
