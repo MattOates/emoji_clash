@@ -1,4 +1,7 @@
-import { FP, MAP_TILES, TILE, STATS as S, type Entity, type Kind } from "./game/types";
+import {
+  FP, MAP_TILES, TILE, STATS as S, FACE_FACES, MAX_LEVEL, BLAST_RADIUS,
+  type Entity, type Kind,
+} from "./game/types";
 import type { World } from "./game/sim";
 
 export interface Camera { x: number; y: number; zoom: number }
@@ -6,18 +9,57 @@ export interface Camera { x: number; y: number; zoom: number }
 const MAP_PX = MAP_TILES * TILE;
 
 export const COLORS = [
-  { body: "#57c9ff", dark: "#155e7d", glow: "rgba(87,201,255,0.35)" },
-  { body: "#ff8a5c", dark: "#7d3415", glow: "rgba(255,138,92,0.35)" },
+  { body: "#5bd0ff", dark: "#0f4c68", glow: "rgba(91,208,255,0.5)", name: "Blue" },
+  { body: "#ff9a5c", dark: "#7a3a15", glow: "rgba(255,154,92,0.5)", name: "Orange" },
 ];
-const NEUTRAL = { body: "#c58bff", dark: "#4a2a70", glow: "rgba(197,139,255,0.3)" };
+const NEUTRAL = { body: "#c58bff", dark: "#4a2a70", glow: "rgba(197,139,255,0.4)", name: "Neutral" };
 
-interface Puff { x: number; y: number; life: number; max: number; kind: string }
+interface Puff { x: number; y: number; life: number; max: number; kind: string; text?: string }
+
+// Emoji are colour glyphs — fillStyle does nothing to them — so team identity
+// comes from the ring behind, and each glyph is rasterised once and blitted
+// after that (measured at roughly half the cost of fillText per frame).
+const glyphCache = new Map<string, HTMLCanvasElement>();
+function glyph(emoji: string, size: number): HTMLCanvasElement {
+  const dpr = Math.min(3, window.devicePixelRatio || 1);
+  const key = `${emoji}|${size}|${dpr}`;
+  const hit = glyphCache.get(key);
+  if (hit) return hit;
+  const pad = Math.ceil(size * 0.3);
+  const c = document.createElement("canvas");
+  c.width = c.height = Math.ceil((size + pad * 2) * dpr);
+  const ctx = c.getContext("2d")!;
+  ctx.scale(dpr, dpr);
+  ctx.font = `${size}px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(emoji, (size + pad * 2) / 2, (size + pad * 2) / 2);
+  glyphCache.set(key, c);
+  return c;
+}
+
+function drawGlyph(ctx: CanvasRenderingContext2D, emoji: string, x: number, y: number, size: number) {
+  const g = glyph(emoji, roundSize(size));
+  const dpr = Math.min(3, window.devicePixelRatio || 1);
+  const w = g.width / dpr, h = g.height / dpr;
+  ctx.drawImage(g, x - w / 2, y - h / 2, w, h);
+}
+
+// Snap to a few sizes so the cache stays small across zoom levels.
+function roundSize(size: number): number {
+  return Math.max(8, Math.round(size / 2) * 2);
+}
+
+export function emojiFor(e: Entity): string {
+  return e.kind === "face" ? FACE_FACES[Math.min(e.level, MAX_LEVEL)]! : S[e.kind].emoji;
+}
 
 export class Renderer {
   private terrain: HTMLCanvasElement;
   private fogCanvas: HTMLCanvasElement;
   private explored = new Uint8Array(MAP_TILES * MAP_TILES);
   private visible = new Uint8Array(MAP_TILES * MAP_TILES);
+  private fogImage: ImageData | null = null;
   private puffs: Puff[] = [];
   minimap = { x: 0, y: 0, size: 190 };
 
@@ -27,10 +69,11 @@ export class Renderer {
     this.fogCanvas.width = this.fogCanvas.height = MAP_TILES;
   }
 
-  addEvents(events: { x: number; y: number; kind: string }[]) {
+  addEvents(events: { x: number; y: number; kind: string; text?: string }[]) {
     for (const e of events) {
-      const max = e.kind === "death" ? 26 : e.kind === "built" ? 30 : 12;
-      this.puffs.push({ x: e.x / FP, y: e.y / FP, life: max, max, kind: e.kind });
+      const max = e.kind === "blast" ? 34 : e.kind === "death" ? 26
+        : e.kind === "built" || e.kind === "levelup" ? 34 : e.kind === "float" ? 40 : 14;
+      this.puffs.push({ x: e.x / FP, y: e.y / FP, life: max, max, kind: e.kind, text: e.text });
     }
     if (this.puffs.length > 400) this.puffs.splice(0, this.puffs.length - 400);
   }
@@ -42,8 +85,7 @@ export class Renderer {
     const dpr = window.devicePixelRatio || 1;
     const w = this.canvas.width / dpr, h = this.canvas.height / dpr;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.imageSmoothingEnabled = true;
-    ctx.fillStyle = "#05080d";
+    ctx.fillStyle = "#04060b";
     ctx.fillRect(0, 0, w, h);
 
     ctx.save();
@@ -55,26 +97,17 @@ export class Renderer {
 
     const lerp = (a: number, b: number) => (a + (b - a) * alpha) / FP;
 
-    // Shadows under everything, then bodies.
     for (const e of world.entities) {
       const x = lerp(e.px, e.x), y = lerp(e.py, e.y), r = S[e.kind].radius / FP;
-      ctx.fillStyle = "rgba(0,0,0,0.32)";
+      ctx.fillStyle = "rgba(0,0,0,0.34)";
       ctx.beginPath();
-      ctx.ellipse(x + 2, y + r * 0.55, r * 0.95, r * 0.45, 0, 0, Math.PI * 2);
+      ctx.ellipse(x, y + r * 0.62, r * 0.92, r * 0.4, 0, 0, Math.PI * 2);
       ctx.fill();
     }
 
     for (const e of world.entities) {
       const x = lerp(e.px, e.x), y = lerp(e.py, e.y);
-      if (sel.has(e.id)) this.selectionRing(ctx, e, x, y);
-      this.entity(ctx, e, x, y, me);
-      if (hover?.id === e.id && !sel.has(e.id)) {
-        ctx.strokeStyle = "rgba(255,255,255,0.5)";
-        ctx.lineWidth = 1.5 / cam.zoom;
-        ctx.beginPath();
-        ctx.arc(x, y, S[e.kind].radius / FP + 4, 0, Math.PI * 2);
-        ctx.stroke();
-      }
+      this.entity(ctx, e, x, y, me, sel.has(e.id), hover?.id === e.id);
     }
 
     // Order lines for the current selection.
@@ -87,7 +120,8 @@ export class Renderer {
       const tx = (t ? t.x : o.x) / FP, ty = (t ? t.y : o.y) / FP;
       ctx.strokeStyle = o.kind === "attack" || o.kind === "attackMove"
         ? "rgba(255,110,90,0.55)"
-        : o.kind === "harvest" || o.kind === "returnCargo" ? "rgba(197,139,255,0.5)" : "rgba(255,255,255,0.35)";
+        : o.kind === "harvest" || o.kind === "returnCargo" || o.kind === "haul"
+          ? "rgba(197,139,255,0.5)" : "rgba(255,255,255,0.35)";
       ctx.setLineDash([5 / cam.zoom, 5 / cam.zoom]);
       ctx.beginPath();
       ctx.moveTo(e.x / FP, e.y / FP);
@@ -100,16 +134,19 @@ export class Renderer {
 
     if (placing) {
       const r = S[placing.kind].radius / FP;
-      ctx.fillStyle = placing.ok ? "rgba(120,255,170,0.18)" : "rgba(255,90,90,0.2)";
-      ctx.strokeStyle = placing.ok ? "rgba(120,255,170,0.8)" : "rgba(255,90,90,0.85)";
+      ctx.globalAlpha = 0.55;
+      drawGlyph(ctx, S[placing.kind].emoji, placing.x / FP, placing.y / FP, r * 1.7);
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = placing.ok ? "rgba(120,255,170,0.85)" : "rgba(255,90,90,0.9)";
+      ctx.fillStyle = placing.ok ? "rgba(120,255,170,0.12)" : "rgba(255,90,90,0.14)";
       ctx.lineWidth = 2 / cam.zoom;
       ctx.beginPath();
-      ctx.rect(placing.x / FP - r, placing.y / FP - r, r * 2, r * 2);
+      ctx.arc(placing.x / FP, placing.y / FP, r, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
     }
 
-    this.fog(ctx, world, me, cam);
+    this.fog(ctx, world, me);
     ctx.restore();
 
     if (dragBox) {
@@ -131,7 +168,7 @@ export class Renderer {
     const y0 = Math.max(0, Math.floor(cam.y / TILE) * TILE);
     const x1 = Math.min(MAP_PX, cam.x + w / cam.zoom);
     const y1 = Math.min(MAP_PX, cam.y + h / cam.zoom);
-    ctx.strokeStyle = "rgba(255,255,255,0.035)";
+    ctx.strokeStyle = "rgba(120,220,255,0.045)";
     ctx.lineWidth = 1 / cam.zoom;
     ctx.beginPath();
     for (let x = x0; x <= x1; x += TILE) { ctx.moveTo(x, y0); ctx.lineTo(x, y1); }
@@ -139,108 +176,84 @@ export class Renderer {
     ctx.stroke();
   }
 
-  private selectionRing(ctx: CanvasRenderingContext2D, e: Entity, x: number, y: number) {
-    const r = S[e.kind].radius / FP + 5;
-    ctx.strokeStyle = "rgba(150,255,190,0.95)";
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.ellipse(x, y + r * 0.25, r, r * 0.62, 0, 0, Math.PI * 2);
-    ctx.stroke();
-  }
-
-  private entity(ctx: CanvasRenderingContext2D, e: Entity, x: number, y: number, me: number) {
+  /** The ring is the unit's collision circle, drawn at exactly the radius the
+   *  simulation separates on — so crowding always looks like what it is. */
+  private entity(ctx: CanvasRenderingContext2D, e: Entity, x: number, y: number, me: number,
+                 selected: boolean, hovered: boolean) {
     const c = e.owner < 0 ? NEUTRAL : COLORS[e.owner]!;
     const r = S[e.kind].radius / FP;
+    const building = S[e.kind].building;
+
     ctx.save();
-    ctx.translate(x, y);
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fillStyle = e.owner < 0 ? "rgba(150,110,200,0.10)" : c.body;
+    ctx.globalAlpha = e.owner < 0 ? 1 : e.complete ? 0.13 : 0.07;
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = c.body;
+    ctx.globalAlpha = e.complete ? (building ? 0.5 : 0.42) : 0.22;
+    ctx.lineWidth = building ? 2 : 1.6;
+    ctx.stroke();
+    ctx.globalAlpha = 1;
 
-    if (e.flash > 0) { ctx.shadowColor = "#fff"; ctx.shadowBlur = 12; }
-
-    switch (e.kind) {
-      case "crystal": {
-        ctx.fillStyle = c.body;
-        ctx.strokeStyle = c.dark;
-        ctx.lineWidth = 2;
-        const n = 3 + (e.id % 3);
-        for (let i = 0; i < n; i++) {
-          const a = (i / n) * Math.PI * 2 + e.id;
-          const ox = Math.cos(a) * r * 0.4, oy = Math.sin(a) * r * 0.3;
-          const hgt = r * (0.9 + ((e.id + i) % 3) * 0.25) * (e.amount > 400 ? 1 : 0.6);
-          ctx.beginPath();
-          ctx.moveTo(ox, oy - hgt);
-          ctx.lineTo(ox + r * 0.28, oy);
-          ctx.lineTo(ox, oy + r * 0.22);
-          ctx.lineTo(ox - r * 0.28, oy);
-          ctx.closePath();
-          ctx.fill();
-          ctx.stroke();
-        }
-        break;
-      }
-      case "base":
-      case "barracks": {
-        const alpha = e.complete ? 1 : 0.45;
-        ctx.globalAlpha = alpha;
-        ctx.fillStyle = c.dark;
-        roundRect(ctx, -r, -r, r * 2, r * 2, 6);
-        ctx.fill();
-        ctx.fillStyle = c.body;
-        roundRect(ctx, -r * 0.72, -r * 0.72, r * 1.44, r * 1.44, 4);
-        ctx.fill();
-        ctx.fillStyle = "rgba(0,0,0,0.35)";
-        if (e.kind === "base") {
-          ctx.beginPath(); ctx.arc(0, 0, r * 0.34, 0, Math.PI * 2); ctx.fill();
-        } else {
-          ctx.fillRect(-r * 0.5, -r * 0.16, r, r * 0.32);
-        }
-        ctx.globalAlpha = 1;
-        if (!e.complete) {
-          const p = e.progress / S[e.kind].buildTime;
-          ctx.strokeStyle = "rgba(255,255,255,0.85)";
-          ctx.lineWidth = 3;
-          ctx.beginPath();
-          ctx.arc(0, 0, r + 6, -Math.PI / 2, -Math.PI / 2 + p * Math.PI * 2);
-          ctx.stroke();
-        }
-        break;
-      }
-      case "archer": {
-        ctx.fillStyle = c.body; ctx.strokeStyle = c.dark; ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.moveTo(0, -r); ctx.lineTo(r * 0.92, r * 0.75); ctx.lineTo(-r * 0.92, r * 0.75);
-        ctx.closePath(); ctx.fill(); ctx.stroke();
-        break;
-      }
-      case "soldier": {
-        ctx.fillStyle = c.body; ctx.strokeStyle = c.dark; ctx.lineWidth = 2;
-        roundRect(ctx, -r * 0.82, -r * 0.82, r * 1.64, r * 1.64, 3);
-        ctx.fill(); ctx.stroke();
-        ctx.fillStyle = c.dark;
-        ctx.fillRect(-r * 0.2, -r * 0.55, r * 0.4, r * 1.1);
-        break;
-      }
-      default: { // worker
-        ctx.fillStyle = c.body; ctx.strokeStyle = c.dark; ctx.lineWidth = 2;
-        ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-        if (e.cargo > 0) {
-          ctx.fillStyle = NEUTRAL.body;
-          ctx.beginPath(); ctx.arc(0, -r - 3, 3.2, 0, Math.PI * 2); ctx.fill();
-        }
-        break;
-      }
+    if (selected) {
+      ctx.strokeStyle = "rgba(150,255,190,0.95)";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(x, y, r + 3, 0, Math.PI * 2);
+      ctx.stroke();
+    } else if (hovered) {
+      ctx.strokeStyle = "rgba(255,255,255,0.55)";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(x, y, r + 3, 0, Math.PI * 2);
+      ctx.stroke();
     }
+
+    if (e.flash > 0) { ctx.shadowColor = "#fff"; ctx.shadowBlur = 14; }
+    ctx.globalAlpha = e.complete ? 1 : 0.45;
+    drawGlyph(ctx, emojiFor(e), x, y, r * (building ? 1.5 : 1.75));
+    ctx.globalAlpha = 1;
     ctx.shadowBlur = 0;
 
-    if (e.kind !== "crystal" && e.hp < e.maxHp) {
-      const bw = r * 2, hp = Math.max(0, e.hp / e.maxHp);
-      ctx.fillStyle = "rgba(0,0,0,0.6)";
-      ctx.fillRect(-r, -r - 8, bw, 4);
-      ctx.fillStyle = hp > 0.5 ? "#5ddc86" : hp > 0.25 ? "#e8c650" : "#e8564f";
-      ctx.fillRect(-r, -r - 8, bw * hp, 4);
+    // A maxed-out face is about to be somebody's problem.
+    if (e.kind === "face" && e.level >= MAX_LEVEL) {
+      ctx.strokeStyle = "rgba(255,90,70,0.75)";
+      ctx.lineWidth = 1.4;
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath();
+      ctx.arc(x, y, r + 6, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
     }
+
+    if (!e.complete) {
+      const p = e.progress / S[e.kind].buildTime;
+      ctx.strokeStyle = "rgba(160,255,200,0.9)";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(x, y, r + 5, -Math.PI / 2, -Math.PI / 2 + p * Math.PI * 2);
+      ctx.stroke();
+    }
+
+    if (e.owner >= 0 && e.hp < e.maxHp) {
+      const hp = Math.max(0, e.hp / e.maxHp);
+      ctx.fillStyle = "rgba(0,0,0,0.6)";
+      ctx.fillRect(x - r, y - r - 9, r * 2, 4);
+      ctx.fillStyle = hp > 0.5 ? "#5ddc86" : hp > 0.25 ? "#e8c650" : "#e8564f";
+      ctx.fillRect(x - r, y - r - 9, r * 2 * hp, 4);
+    }
+    if (e.cargo > 0) drawGlyph(ctx, e.cargoRes === "bits" ? "💾" : "🎨", x + r * 0.8, y - r * 0.8, 11);
     if (e.owner === me && e.queue.length) {
-      ctx.fillStyle = "rgba(255,255,255,0.8)";
-      for (let i = 0; i < e.queue.length; i++) ctx.fillRect(-r + i * 6, r + 4, 4, 3);
+      ctx.fillStyle = "rgba(255,255,255,0.85)";
+      for (let i = 0; i < e.queue.length; i++) ctx.fillRect(x - r + i * 6, y + r + 3, 4, 3);
+    }
+    if (e.kind === "cloud" && e.complete && (e.stockBits || e.stockPixels)) {
+      ctx.font = "9px ui-monospace, monospace";
+      ctx.textAlign = "center";
+      ctx.fillStyle = "rgba(255,255,255,0.75)";
+      ctx.fillText(`${e.stockBits}·${e.stockPixels}`, x, y + r + 12);
     }
     ctx.restore();
   }
@@ -252,20 +265,44 @@ export class Renderer {
       if (p.life <= 0) { this.puffs.splice(i, 1); continue; }
       const k = p.life / p.max;
       ctx.globalAlpha = k;
-      if (p.kind === "death") {
-        ctx.strokeStyle = "#ffb066";
-        ctx.lineWidth = 2 / cam.zoom;
-        ctx.beginPath(); ctx.arc(p.x, p.y, (1 - k) * 26 + 4, 0, Math.PI * 2); ctx.stroke();
-      } else if (p.kind === "built" || p.kind === "spawn") {
-        ctx.strokeStyle = "#9dfbc0";
-        ctx.lineWidth = 2 / cam.zoom;
-        ctx.beginPath(); ctx.arc(p.x, p.y, (1 - k) * 34 + 6, 0, Math.PI * 2); ctx.stroke();
-      } else if (p.kind === "deposit" || p.kind === "depleted") {
-        ctx.fillStyle = NEUTRAL.body;
-        ctx.beginPath(); ctx.arc(p.x, p.y - (1 - k) * 14, 3, 0, Math.PI * 2); ctx.fill();
-      } else {
-        ctx.fillStyle = p.kind === "shot" ? "#fff0c0" : "#ffd08a";
-        ctx.beginPath(); ctx.arc(p.x, p.y, 2 + k * 3, 0, Math.PI * 2); ctx.fill();
+      switch (p.kind) {
+        case "blast": {
+          ctx.strokeStyle = "rgba(255,140,60,0.95)";
+          ctx.lineWidth = 3 / cam.zoom;
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, (1 - k) * BLAST_RADIUS, 0, Math.PI * 2);
+          ctx.stroke();
+          drawGlyph(ctx, "🤯", p.x, p.y, 18 + (1 - k) * 26);
+          break;
+        }
+        case "float":
+        case "levelup":
+        case "spawn":
+          drawGlyph(ctx, p.text ?? "✨", p.x, p.y - (1 - k) * 22, 15);
+          break;
+        case "built":
+          ctx.strokeStyle = "rgba(160,255,200,0.9)";
+          ctx.lineWidth = 2 / cam.zoom;
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, (1 - k) * 40 + 6, 0, Math.PI * 2);
+          ctx.stroke();
+          drawGlyph(ctx, "✨", p.x, p.y, 18);
+          break;
+        case "death":
+          ctx.strokeStyle = "rgba(255,150,90,0.8)";
+          ctx.lineWidth = 2 / cam.zoom;
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, (1 - k) * 24 + 4, 0, Math.PI * 2);
+          ctx.stroke();
+          break;
+        case "depleted":
+          drawGlyph(ctx, "🕳️", p.x, p.y, 16);
+          break;
+        default:
+          ctx.fillStyle = p.kind === "shot" ? "#fff0c0" : "#ffd08a";
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, 2 + k * 3, 0, Math.PI * 2);
+          ctx.fill();
       }
       ctx.globalAlpha = 1;
     }
@@ -273,11 +310,12 @@ export class Renderer {
 
   /** Fog is presentation only — the simulation never reads it, so it can never
    *  cause the two peers to disagree. */
-  private fog(ctx: CanvasRenderingContext2D, world: World, me: number, cam: Camera) {
+  private fog(ctx: CanvasRenderingContext2D, world: World, me: number) {
     this.visible.fill(0);
     for (const e of world.entities) {
       if (e.owner !== me) continue;
       const s = S[e.kind].sight / FP / TILE;
+      if (s <= 0) continue;
       const cx = e.x / FP / TILE, cy = e.y / FP / TILE;
       const r = Math.ceil(s);
       for (let y = Math.max(0, (cy - r) | 0); y <= Math.min(MAP_TILES - 1, cy + r); y++) {
@@ -291,19 +329,16 @@ export class Renderer {
       }
     }
     const fc = this.fogCanvas.getContext("2d")!;
-    const img = fc.createImageData(MAP_TILES, MAP_TILES);
+    const img = this.fogImage ?? (this.fogImage = fc.createImageData(MAP_TILES, MAP_TILES));
     for (let i = 0; i < this.visible.length; i++) {
-      const a = this.visible[i] ? 0 : this.explored[i] ? 150 : 245;
-      img.data[i * 4 + 3] = a;
-      img.data[i * 4] = 2; img.data[i * 4 + 1] = 4; img.data[i * 4 + 2] = 8;
+      img.data[i * 4] = 2; img.data[i * 4 + 1] = 4; img.data[i * 4 + 2] = 9;
+      img.data[i * 4 + 3] = this.visible[i] ? 0 : this.explored[i] ? 150 : 245;
     }
     fc.putImageData(img, 0, 0);
     ctx.save();
     ctx.imageSmoothingEnabled = true;
-    ctx.globalCompositeOperation = "source-over";
     ctx.drawImage(this.fogCanvas, -TILE / 2, -TILE / 2, MAP_PX + TILE, MAP_PX + TILE);
     ctx.restore();
-    void cam;
   }
 
   isVisible(worldX: number, worldY: number): boolean {
@@ -337,8 +372,7 @@ export class Renderer {
     }
     for (const e of world.entities) {
       if (!this.isVisible(e.x, e.y) && e.owner !== me) continue;
-      const c = e.owner < 0 ? NEUTRAL.body : COLORS[e.owner]!.body;
-      ctx.fillStyle = c;
+      ctx.fillStyle = e.owner < 0 ? NEUTRAL.body : COLORS[e.owner]!.body;
       const s = S[e.kind].building ? 5 : 2.5;
       ctx.fillRect(x0 + (e.x / FP) * k - s / 2, y0 + (e.y / FP) * k - s / 2, s, s);
     }
@@ -361,7 +395,8 @@ function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: numbe
   ctx.closePath();
 }
 
-/** One-off procedural ground, baked to an offscreen canvas at map resolution. */
+/** The battlefield is a desktop: dark panels, faint scanlines, a few stray
+ *  glyphs someone left lying around. Baked once at map resolution. */
 function buildTerrain(seed: number): HTMLCanvasElement {
   const c = document.createElement("canvas");
   c.width = c.height = MAP_PX;
@@ -369,28 +404,40 @@ function buildTerrain(seed: number): HTMLCanvasElement {
   let s = seed >>> 0 || 1;
   const rand = () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296);
 
-  ctx.fillStyle = "#14211c";
+  ctx.fillStyle = "#0a1420";
   ctx.fillRect(0, 0, MAP_PX, MAP_PX);
   for (let y = 0; y < MAP_TILES; y++) {
     for (let x = 0; x < MAP_TILES; x++) {
       const n = rand();
-      const edge = Math.min(x, y, MAP_TILES - 1 - x, MAP_TILES - 1 - y) / 10;
-      const lum = 0.82 + n * 0.28 + Math.min(0.25, edge * 0.08);
-      ctx.fillStyle = `rgb(${Math.round(22 * lum)},${Math.round(37 * lum)},${Math.round(31 * lum)})`;
+      const lum = 0.85 + n * 0.3;
+      ctx.fillStyle = `rgb(${Math.round(13 * lum)},${Math.round(26 * lum)},${Math.round(40 * lum)})`;
       ctx.fillRect(x * TILE, y * TILE, TILE, TILE);
     }
   }
-  // Scattered rock and scrub for a sense of scale.
-  for (let i = 0; i < 900; i++) {
-    const x = rand() * MAP_PX, y = rand() * MAP_PX, r = 2 + rand() * 7;
-    ctx.fillStyle = rand() > 0.45 ? "rgba(40,64,52,0.55)" : "rgba(14,24,20,0.55)";
+  ctx.fillStyle = "rgba(255,255,255,0.012)";
+  for (let y = 0; y < MAP_PX; y += 3) ctx.fillRect(0, y, MAP_PX, 1);
+  for (let i = 0; i < 420; i++) {
+    const x = rand() * MAP_PX, y = rand() * MAP_PX, r = 3 + rand() * 9;
+    ctx.fillStyle = rand() > 0.5 ? "rgba(60,110,150,0.10)" : "rgba(8,16,26,0.55)";
     ctx.beginPath();
-    ctx.ellipse(x, y, r, r * 0.7, rand() * 3, 0, Math.PI * 2);
+    ctx.ellipse(x, y, r, r * 0.72, rand() * 3, 0, Math.PI * 2);
     ctx.fill();
   }
-  const g = ctx.createRadialGradient(MAP_PX / 2, MAP_PX / 2, MAP_PX * 0.2, MAP_PX / 2, MAP_PX / 2, MAP_PX * 0.75);
-  g.addColorStop(0, "rgba(90,160,255,0.05)");
-  g.addColorStop(1, "rgba(0,0,0,0.35)");
+  // Litter: cold, low-contrast glyphs scattered as scenery.
+  const litter = ["📁", "🔗", "📎", "🗑️", "⌘", "🖱️", "🔌", "📶", "🧊", "🪟"];
+  ctx.globalAlpha = 0.075;
+  for (let i = 0; i < 130; i++) {
+    const g = litter[(rand() * litter.length) | 0]!;
+    const size = 16 + rand() * 26;
+    ctx.font = `${size}px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(g, rand() * MAP_PX, rand() * MAP_PX);
+  }
+  ctx.globalAlpha = 1;
+  const g = ctx.createRadialGradient(MAP_PX / 2, MAP_PX / 2, MAP_PX * 0.2, MAP_PX / 2, MAP_PX / 2, MAP_PX * 0.78);
+  g.addColorStop(0, "rgba(90,180,255,0.05)");
+  g.addColorStop(1, "rgba(0,0,0,0.42)");
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, MAP_PX, MAP_PX);
   return c;

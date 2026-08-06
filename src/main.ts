@@ -1,8 +1,11 @@
-import { FP, MAP_TILES, STATS, TILE, type Command, type Entity, type Kind } from "./game/types";
-import { canTrain, siteClear, trainableAt, type World } from "./game/sim";
+import {
+  FP, MAP_TILES, STATS, TILE, BUILDABLE, MAX_LEVEL, RES_EMOJI,
+  affordable, costText, type Command, type Entity, type Kind,
+} from "./game/types";
+import { canTrain, siteClear, trainableAt, ENROLL_COST, type World } from "./game/sim";
 import { createRunner, type Mode, type Runner } from "./lockstep";
 import { createGuest, createHost, type Net } from "./net";
-import { COLORS, Renderer, type Camera } from "./render";
+import { COLORS, Renderer, emojiFor, type Camera } from "./render";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const MAP_PX = MAP_TILES * TILE;
@@ -116,9 +119,9 @@ function start(mode: Mode, me: number, seed: number, net?: Net) {
     get runner() { return runner; }, cam, selection,
     get armed() { return { placing, attackMoveArmed }; },
   };
-  const home = runner.world.entities.find((e) => e.owner === me && e.kind === "base");
+  const home = runner.world.entities.find((e) => e.owner === me && e.kind === "datacenter");
   if (home) centerOn(home.x / FP, home.y / FP);
-  toast(mode === "practice" ? "Practice match — build workers, then an army." : "Connected. Good luck.");
+  toast(mode === "practice" ? "Practice run — mine 💾, build a ⌨️ Keyboard, make friends." : "Connected. Good luck. 🫡");
   requestAnimationFrame(frame);
 }
 
@@ -216,10 +219,10 @@ canvas.addEventListener("pointerdown", (ev) => {
   if (ev.button !== 0) return;
 
   if (placing) {
-    const workers = selectedUnits().filter((e) => e.kind === "worker");
-    if (!workers.length) { placing = null; return; }
+    const crew = selectedUnits().filter((e) => e.kind === "engineer");
+    if (!crew.length) { placing = null; return; }
     if (!siteClear(runner.world, w.x, w.y, STATS[placing].radius)) { toast("Blocked — pick clearer ground."); return; }
-    issue({ c: "build", ids: workers.map((e) => e.id), kind: placing, x: w.x, y: w.y });
+    issue({ c: "build", ids: crew.map((e) => e.id), kind: placing, x: w.x, y: w.y });
     if (!ev.shiftKey) placing = null;
     return;
   }
@@ -323,9 +326,7 @@ function order(wx: number, wy: number, target: Entity | undefined) {
   }
   if (!units.length) return;
   const ids = units.map((e) => e.id);
-  if (target && (target.owner !== runner!.me || target.kind === "crystal" || !target.complete)) {
-    issue({ c: "target", ids, id: target.id });
-  } else if (target && target.kind === "base" && units.some((u) => u.cargo > 0)) {
+  if (target) {
     issue({ c: "target", ids, id: target.id });
   } else {
     issue({ c: "move", ids, x: wx, y: wy });
@@ -338,9 +339,9 @@ window.addEventListener("keydown", (ev) => {
   keys.add(k);
 
   if (ev.key === "Escape") { placing = null; attackMoveArmed = false; selection.clear(); syncCard(); return; }
-  if (ev.key === "F1") { ev.preventDefault(); toast("LMB drag select · RMB order · A attack-move · B base · R barracks · W/S/A train · Ctrl+A all on screen · Ctrl+1-9 group · Space home"); return; }
+  if (ev.key === "F1") { ev.preventDefault(); toast("LMB drag · RMB order · A attack-move · D drive · Y gallery · K keyboard · C cloud · X feed · B datacenter · E/F/N/G/W/V train · Ctrl+A all · Ctrl+1-9 group · Space home"); return; }
   if (k === " ") {
-    const home = runner.world.entities.find((e) => e.owner === runner!.me && e.kind === "base");
+    const home = runner.world.entities.find((e) => e.owner === runner!.me && e.kind === "datacenter");
     if (home) centerOn(home.x / FP, home.y / FP);
     ev.preventDefault();
     return;
@@ -395,10 +396,9 @@ window.addEventListener("keydown", (ev) => {
   }
 
   if (k === "a" && selectedUnits().length) { attackMoveArmed = !attackMoveArmed; placing = null; return; }
-  if ((k === "b" || k === "r") && selectedUnits().some((e) => e.kind === "worker")) {
-    placing = k === "b" ? "base" : "barracks";
-    attackMoveArmed = false;
-    return;
+  if (selectedUnits().some((e) => e.kind === "engineer")) {
+    const site = BUILDABLE.find((kind) => STATS[kind].hotkey.toLowerCase() === k);
+    if (site) { placing = placing === site ? null : site; attackMoveArmed = false; return; }
   }
   if (k === "s") { const ids = selectedUnits().map((e) => e.id); if (ids.length) issue({ c: "stop", ids }); }
 });
@@ -406,8 +406,8 @@ window.addEventListener("keyup", (ev) => keys.delete(ev.key.toLowerCase()));
 
 function tryTrain(buildings: Entity[], kind: Kind) {
   const pl = runner!.world.players[runner!.me]!;
-  if (pl.crystals < STATS[kind].cost) { toast("Not enough crystals."); return; }
-  if (pl.supply >= pl.supplyCap) { toast("Supply capped — build another base or barracks."); return; }
+  if (!affordable(pl, STATS[kind].cost)) { toast(`Need ${costText(STATS[kind].cost)}.`); return; }
+  if (pl.supply >= pl.supplyCap) { toast("Supply capped — build a 🏢 Datacenter or ⌨️ Keyboard."); return; }
   // Prefer the shortest queue so clicks spread across production.
   const target = [...buildings].sort((a, b) => a.queue.length - b.queue.length)[0]!;
   issue({ c: "train", ids: [target.id], kind });
@@ -424,8 +424,9 @@ function syncCard() {
 
   const kinds = new Set(sel.map((e) => e.kind));
   const key = sel.length + "|" + [...kinds].sort().join(",");
-  const title = sel.length === 1 ? STATS[sel[0]!.kind].label : `${sel.length} selected`;
-  $("cardTitle").textContent = title;
+  $("cardTitle").textContent = sel.length === 1
+    ? `${emojiFor(sel[0]!)} ${STATS[sel[0]!.kind].label}`
+    : `${sel.length} selected`;
 
   if (key === cardKey) return;
   cardKey = key;
@@ -443,7 +444,7 @@ function syncCard() {
   const trained = new Set<Kind>();
   for (const b of producers) for (const u of trainableAt(b.kind)) trained.add(u);
   for (const u of trained) {
-    add(`${STATS[u].label} [${STATS[u].hotkey}]`, `${STATS[u].cost}◆`,
+    add(`${STATS[u].emoji} ${STATS[u].label} [${STATS[u].hotkey}]`, costText(STATS[u].cost),
       () => tryTrain(producers.filter((b) => canTrain(b.kind, u)), u));
   }
   if (producers.some((b) => b.queue.length)) {
@@ -453,9 +454,17 @@ function syncCard() {
   // These arm a mode rather than acting immediately, so they toggle: clicking
   // again backs out instead of leaving the next click booby-trapped.
   const arm = (kind: Kind) => { placing = placing === kind ? null : kind; attackMoveArmed = false; };
-  if (sel.some((e) => e.kind === "worker")) {
-    add("Base [B]", `${STATS.base.cost}◆`, () => arm("base"));
-    add("Barracks [R]", `${STATS.barracks.cost}◆`, () => arm("barracks"));
+  if (sel.some((e) => e.kind === "engineer")) {
+    for (const kind of BUILDABLE) {
+      add(`${STATS[kind].emoji} ${STATS[kind].label} [${STATS[kind].hotkey}]`, costText(STATS[kind].cost), () => arm(kind));
+    }
+  }
+  if (sel.some((e) => e.kind === "face" && e.level < MAX_LEVEL)) {
+    add("📱 Send to Feed", costText(ENROLL_COST), () => toast("Right-click a 📱 Social Feed with them selected."));
+  }
+  if (sel.some((e) => e.kind === "face" && e.level >= MAX_LEVEL)) {
+    add("💥 Detonate", "take them with you", () =>
+      issue({ c: "detonate", ids: sel.filter((e) => e.kind === "face" && e.level >= MAX_LEVEL).map((e) => e.id) }));
   }
   if (sel.some((e) => !STATS[e.kind].building)) {
     add("Attack [A]", "move & engage", () => { attackMoveArmed = !attackMoveArmed; placing = null; });
@@ -468,13 +477,19 @@ function syncCardMeta() {
   if (!sel.length) return;
   if (sel.length === 1) {
     const e = sel[0]!;
-    const bits = [`${Math.max(0, e.hp)}/${e.maxHp} hp`];
-    if (e.kind === "crystal") bits.push(`${e.amount} left`);
-    if (e.cargo) bits.push(`carrying ${e.cargo}◆`);
-    if (e.queue.length) bits.push(`queue ${e.queue.length} · ${Math.ceil(e.queueLeft / 20)}s`);
-    if (!e.complete) bits.push("under construction");
-    bits.push(e.order.kind);
-    $("cardMeta").textContent = bits.join(" · ");
+    const parts: string[] = [];
+    if (e.owner >= 0) parts.push(`${Math.max(0, e.hp)}/${e.maxHp} hp`);
+    if (e.kind === "bitnode" || e.kind === "pixnode") parts.push(`${e.amount} left`);
+    if (e.cargo) parts.push(`carrying ${e.cargo}${RES_EMOJI[e.cargoRes ?? "bits"]}`);
+    if (e.kind === "cloud" && e.complete) parts.push(`intake ${e.stockBits}💾 ${e.stockPixels}🎨`);
+    if (e.kind === "face") {
+      parts.push(e.level >= MAX_LEVEL ? "fully radicalised — detonates on death"
+        : `mood ${e.level + 1}/${MAX_LEVEL + 1}`);
+    }
+    if (e.queue.length) parts.push(`queue ${e.queue.length} · ${Math.ceil(e.queueLeft / 20)}s`);
+    if (!e.complete) parts.push("under construction");
+    parts.push(STATS[e.kind].blurb || e.order.kind);
+    $("cardMeta").textContent = parts.join(" · ");
   } else {
     const hp = sel.reduce((a, e) => a + Math.max(0, e.hp), 0);
     const max = sel.reduce((a, e) => a + e.maxHp, 0);
@@ -484,7 +499,7 @@ function syncCardMeta() {
 
 function finish(title: string, text: string) {
   $("overTitle").textContent = title;
-  $("overTitle").style.color = title === "VICTORY" ? "#6ee7a0" : "#ff6b5e";
+  $("overTitle").style.color = title.startsWith("VICTORY") ? "#6ee7a0" : "#ff6b5e";
   $("overText").textContent = text;
   $("over").classList.remove("hidden");
 }
@@ -534,7 +549,9 @@ function frame(now: number) {
   renderer.draw(world, cam, me, alpha, selection, hover, ghost, drag?.moved ? drag : null);
 
   const pl = world.players[me]!;
-  $("crystals").textContent = String(pl.crystals);
+  $("bits").textContent = String(pl.bits);
+  $("pixels").textContent = String(pl.pixels);
+  $("slop").textContent = String(pl.slop);
   $("supply").textContent = `${pl.supply}/${pl.supplyCap}`;
   $("netinfo").textContent =
     runner.mode === "practice"
@@ -555,9 +572,9 @@ function frame(now: number) {
   syncCardMeta();
 
   if (world.winner >= 0 && $("over").classList.contains("hidden")) {
-    if (world.winner === me) finish("VICTORY", "Every enemy structure and unit destroyed.");
-    else if (world.winner === 2) finish("DRAW", "Both forces were wiped out.");
-    else finish("DEFEAT", `${COLORS[world.winner]!.body === COLORS[0]!.body ? "Blue" : "Orange"} took the field.`);
+    if (world.winner === me) finish("VICTORY 🏆", "Their whole feed is gone. Ratioed.");
+    else if (world.winner === 2) finish("DRAW 🤝", "Everybody exploded. Nobody logged off.");
+    else finish("DEFEAT 💀", `${COLORS[world.winner]!.name} owns the timeline now.`);
   }
 }
 

@@ -1,4 +1,4 @@
-import { FP, STATS, type Command, type Entity } from "./types";
+import { FP, STATS, affordable, MAX_LEVEL, type Command, type Entity, type Kind } from "./types";
 import { siteClear, type World } from "./sim";
 
 // Eight unit directions at 1000x scale — integer table instead of trig, so the
@@ -19,61 +19,103 @@ export function aiCommands(w: World, me: number): Command[] {
     if (e.owner === me) mine.push(e);
     else if (e.owner >= 0) foes.push(e);
   }
-  const of = (k: string) => mine.filter((e) => e.kind === k);
-  const bases = of("base").filter((b) => b.complete);
-  const barracks = of("barracks");
-  const workers = of("worker");
-  const army = mine.filter((e) => e.kind === "soldier" || e.kind === "archer");
+  const of = (k: Kind) => mine.filter((e) => e.kind === k);
+  const centres = of("datacenter").filter((b) => b.complete);
+  const keyboards = of("keyboard");
+  const clouds = of("cloud").filter((b) => b.complete);
+  const feeds = of("feed").filter((b) => b.complete);
+  const crew = of("engineer");
+  const army = mine.filter((e) => !STATS[e.kind].building && e.kind !== "engineer");
   const pl = w.players[me]!;
-  const crystals = w.entities.filter((c) => c.kind === "crystal" && c.amount > 0);
+  const nodes = w.entities.filter((c) => (c.kind === "bitnode" || c.kind === "pixnode") && c.amount > 0);
 
-  // Idle workers go dig.
-  for (const wk of workers) {
+  // Idle engineers go dig — every third on pixels, every fourth seconded to
+  // a Cloud once one exists.
+  // A Cloud is useless without couriers, and couriers never go idle, so they
+  // are conscripted from the mining crew rather than waiting for spare hands.
+  const haulers = crew.filter((e) => e.order.kind === "haul").length;
+  if (clouds.length && haulers < 3) {
+    const spare = crew.find((e) => e.order.kind === "harvest");
+    if (spare) out.push({ c: "target", ids: [spare.id], id: clouds[0]!.id });
+  }
+
+  let idleSeen = 0;
+  for (const wk of crew) {
     if (wk.order.kind !== "idle") continue;
+    const n = idleSeen++;
+    if (clouds.length && n % 4 === 3) { out.push({ c: "target", ids: [wk.id], id: clouds[0]!.id }); continue; }
+    const wantPixels = n % 3 === 2;
     let best: Entity | undefined, bestD = Infinity;
-    for (const c of crystals) {
+    for (const c of nodes) {
+      if (wantPixels !== (c.kind === "pixnode")) continue;
+      const dx = c.x - wk.x, dy = c.y - wk.y, d = dx * dx + dy * dy;
+      if (d < bestD) { bestD = d; best = c; }
+    }
+    if (!best) for (const c of nodes) {
       const dx = c.x - wk.x, dy = c.y - wk.y, d = dx * dx + dy * dy;
       if (d < bestD) { bestD = d; best = c; }
     }
     if (best) out.push({ c: "target", ids: [wk.id], id: best.id });
   }
 
-  // Economy first, then army production.
-  if (bases.length && workers.length < 11) {
-    out.push({ c: "train", ids: bases.map((b) => b.id), kind: "worker" });
+  // What to put up next, most important first.
+  const want: Kind[] = [];
+  if (!keyboards.length) want.push("keyboard");
+  if (crew.length >= 7 && !of("cloud").length) want.push("cloud");
+  if (crew.length >= 8 && !of("feed").length) want.push("feed");
+  if (crew.length >= 6 && keyboards.length < 3) want.push("keyboard");
+  // Dribbling every last bit into units means never affording the good
+  // buildings, so stop making bodies while banking for the next one.
+  const saving = want.length > 0 && !affordable(pl, STATS[want[0]!].cost);
+
+  if (centres.length && crew.length < 13) {
+    out.push({ c: "train", ids: centres.map((b) => b.id), kind: "engineer" });
   }
-  for (const b of barracks) {
+  if (!saving) for (const b of keyboards) {
     if (!b.complete) continue;
-    const kind = ((w.tick / 10) | 0) % 3 === 0 ? "archer" : "soldier";
+    const roll = ((w.tick / 10) | 0) % 5;
+    const kind: Kind = roll === 0 ? "guard" : roll === 1 ? "ninja"
+      : roll === 2 && affordable(pl, STATS.wizard.cost) ? "wizard"
+      : roll === 3 && affordable(pl, STATS.vampire.cost) ? "vampire" : "face";
     out.push({ c: "train", ids: [b.id], kind });
   }
 
-  // Expand production while there is spare income.
-  if (barracks.length < 4 && pl.crystals >= STATS.barracks.cost + 60 && bases.length && workers.length >= 5) {
-    const home = bases[0]!;
-    const ring = 90 * FP * (10 + barracks.length * 4);
+  // Radicalise a smiley whenever there is slop to spare.
+  const enrolling = new Set<number>();
+  if (feeds.length && pl.slop >= 4) {
+    const calm = mine.filter((e) => e.kind === "face" && e.level < MAX_LEVEL && e.order.kind === "idle");
+    if (calm.length) {
+      out.push({ c: "target", ids: [calm[0]!.id], id: feeds[0]!.id });
+      enrolling.add(calm[0]!.id); // or the hold order below would overwrite it
+    }
+  }
+
+  // Build out whatever we can currently pay for.
+  const target = want.find((k) => affordable(pl, STATS[k].cost));
+  if (target && centres.length && crew.length >= 4) {
+    const home = centres[0]!;
+    const ring = 100 * FP * (10 + mine.filter((e) => STATS[e.kind].building).length * 3);
     for (let i = 0; i < RING.length; i++) {
       const [cx, cy] = RING[i]!;
       const x = home.x + Math.trunc((cx * ring) / 10000);
       const y = home.y + Math.trunc((cy * ring) / 10000);
-      if (siteClear(w, x, y, STATS.barracks.radius)) {
-        const builder = workers.find((k) => k.order.kind === "harvest") ?? workers[0];
-        if (builder) out.push({ c: "build", ids: [builder.id], kind: "barracks", x, y });
+      if (siteClear(w, x, y, STATS[target].radius)) {
+        const builder = crew.find((k) => k.order.kind === "harvest") ?? crew[0];
+        if (builder) out.push({ c: "build", ids: [builder.id], kind: target, x, y });
         break;
       }
     }
   }
 
   // Attack once there is a critical mass; otherwise hold near home.
-  const idleArmy = army.filter((a) => a.order.kind === "idle");
+  const idleArmy = army.filter((a) => a.order.kind === "idle" && !enrolling.has(a.id)
+    && !(a.kind === "face" && a.level > 0 && a.level < MAX_LEVEL));
   if (army.length >= 7 && idleArmy.length) {
-    let target: Entity | undefined = foes.find((f) => f.kind === "base") ?? foes[0];
-    if (target) {
-      out.push({ c: "attackMove", ids: idleArmy.map((a) => a.id), x: target.x, y: target.y });
-    }
-  } else if (idleArmy.length && bases.length) {
-    const h = bases[0]!;
-    out.push({ c: "attackMove", ids: idleArmy.map((a) => a.id), x: h.x + 70 * FP, y: h.y + 70 * FP });
+    const hit = foes.find((f) => f.kind === "datacenter") ?? foes.find((f) => STATS[f.kind].building) ?? foes[0];
+    if (hit) out.push({ c: "attackMove", ids: idleArmy.map((a) => a.id), x: hit.x, y: hit.y });
+  } else if (idleArmy.length && centres.length) {
+    const h = centres[0]!;
+    out.push({ c: "attackMove", ids: idleArmy.map((a) => a.id), x: h.x + 80 * FP, y: h.y + 80 * FP });
   }
 
   return out;

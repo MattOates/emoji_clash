@@ -1,6 +1,7 @@
 import {
-  FP, TILE, MAP_TILES, MAP_SIZE, STATS, IDLE,
-  type Command, type Entity, type Kind, type Player,
+  FP, TILE, MAP_TILES, MAP_SIZE, STATS, IDLE, MAX_LEVEL, BLAST_RADIUS, BLAST_DAMAGE,
+  affordable, pay, faceHp, faceDamage,
+  type Command, type Entity, type Kind, type Player, type Res,
 } from "./types";
 import { PathCache } from "./flow";
 
@@ -17,11 +18,6 @@ export function isqrt(n: number): number {
   return x;
 }
 
-export function dist(ax: number, ay: number, bx: number, by: number): number {
-  const dx = ax - bx, dy = ay - by;
-  return isqrt(dx * dx + dy * dy);
-}
-
 function rng(state: number): number {
   // mulberry32, kept entirely in uint32 space
   let t = (state + 0x6d2b79f5) | 0;
@@ -32,10 +28,14 @@ function rng(state: number): number {
 
 // ---------------------------------------------------------------------- world
 
-export const GATHER_TICKS = 40;
+export const BIT_TICKS = 30; // bits come out quickly
+export const PIX_TICKS = 55; // pixels are a slog — nearly twice a bit
 export const CARGO_SIZE = 10;
 export const BUILD_RANGE = 22 * FP;
+export const ENROLL_TICKS = 70;
+export const CONVERT_TICKS = 26;
 export const SUPPLY_MAX = 120;
+export const ENROLL_COST = { bits: 30, pixels: 0, slop: 2 };
 
 export interface World {
   tick: number;
@@ -44,7 +44,7 @@ export interface World {
   entities: Entity[]; // always sorted by id
   byId: Map<number, Entity>;
   players: [Player, Player];
-  events: { x: number; y: number; kind: string }[]; // render-only, cleared each step
+  events: { x: number; y: number; kind: string; text?: string }[]; // render-only
   winner: number; // -1 while undecided
   paths: PathCache; // derived from the entities; never part of the checksum
 }
@@ -55,9 +55,10 @@ function makeEntity(w: World, kind: Kind, owner: number, x: number, y: number, c
     id: w.nextId++, kind, owner, x, y,
     hp: complete ? s.hp : Math.max(1, (s.hp / 10) | 0),
     maxHp: s.hp,
-    order: { ...IDLE }, cooldown: 0, cargo: 0, amount: 0, progress: 0,
+    order: { ...IDLE }, cooldown: 0, cargo: 0, cargoRes: null, amount: 0, progress: 0,
     complete, queue: [], queueLeft: 0,
-    rallyX: x, rallyY: y + 60 * FP,
+    rallyX: x, rallyY: y + 62 * FP,
+    level: 0, stockBits: 0, stockPixels: 0,
     stuck: 0, lastD: 0,
     px: x, py: y, flash: 0,
   };
@@ -71,43 +72,52 @@ export function createWorld(seed: number): World {
   const w: World = {
     tick: 0, seed: seed >>> 0, nextId: 1, entities: [], byId: new Map(),
     players: [
-      { crystals: 300, supply: 0, supplyCap: 0, defeated: false },
-      { crystals: 300, supply: 0, supplyCap: 0, defeated: false },
+      { bits: 250, pixels: 60, slop: 0, supply: 0, supplyCap: 0, defeated: false },
+      { bits: 250, pixels: 60, slop: 0, supply: 0, supplyCap: 0, defeated: false },
     ],
     events: [], winner: -1, paths: new PathCache(),
   };
 
   const t = (n: number) => Math.round(n * TILE * FP); // tiles -> fixed-point, integral
-  const starts: [number, number][] = [[t(9), t(9)], [t(MAP_TILES - 9), t(MAP_TILES - 9)]];
+  const starts: [number, number][] = [[t(10), t(10)], [t(MAP_TILES - 10), t(MAP_TILES - 10)]];
+
+  const node = (kind: Kind, x: number, y: number, amount: number) => {
+    const n = makeEntity(w, kind, -1, clamp(x, t(1), t(MAP_TILES - 1)), clamp(y, t(1), t(MAP_TILES - 1)));
+    n.amount = amount;
+    return n;
+  };
 
   for (let p = 0; p < 2; p++) {
     const [bx, by] = starts[p]!;
-    makeEntity(w, "base", p, bx, by);
+    const away = p === 0 ? 1 : -1;
+    makeEntity(w, "datacenter", p, bx, by);
+    // You open with somewhere to put each resource; losing one really hurts.
+    makeEntity(w, "drive", p, bx + away * t(2.9), by - away * t(1.2));
+    makeEntity(w, "gallery", p, bx - away * t(1.2), by + away * t(2.9));
     for (let i = 0; i < 4; i++) {
-      const a = p === 0 ? 1 : -1;
-      makeEntity(w, "worker", p, bx + a * t(1.6), by + a * t(0.4) + i * 22 * FP - 33 * FP);
+      makeEntity(w, "engineer", p, bx + away * t(1.7), by + away * t(1.7) + i * 24 * FP - 36 * FP);
     }
-    // Two crystal fields per start location.
-    for (const [ox, oy] of [[-3.2, 0.4], [0.4, -3.2]] as [number, number][]) {
-      for (let i = 0; i < 4; i++) {
-        const cx = bx + t(ox) + (i % 2) * 44 * FP;
-        const cy = by + t(oy) + ((i / 2) | 0) * 44 * FP;
-        const c = makeEntity(w, "crystal", -1, cx, cy);
-        c.amount = 1500;
+    // Bits are everywhere; pixels are not — five caches to every seam. Every
+    // offset is mirrored through `away` so the two starts are identical under
+    // a 180° rotation of the map.
+    for (const [ox, oy] of [[-3.6, -0.4], [-0.4, -3.6], [-4.1, -3.4]] as [number, number][]) {
+      for (let i = 0; i < 2; i++) {
+        node("bitnode", bx + away * (t(ox) + i * 46 * FP), by + away * t(oy), 1400);
       }
+    }
+    for (const [ox, oy] of [[-4.9, -4.9], [1.9, -4.4]] as [number, number][]) {
+      node("pixnode", bx + away * t(ox), by + away * t(oy), 1500);
     }
   }
 
-  // Contested crystals along the centre diagonal.
-  for (let i = 0; i < 6; i++) {
+  // Contested ground down the diagonal: mostly bits, one rich seam in the middle.
+  for (let i = 0; i < 13; i++) {
     const r = rng(seed + i * 7919);
-    const along = t(18 + i * 5.5);
-    const off = t(14) - ((r % t(28)) | 0);
-    const c = makeEntity(w, "crystal", -1,
-      clamp(along + off, t(2), t(MAP_TILES - 2)),
-      clamp(t(MAP_TILES) - along + off, t(2), t(MAP_TILES - 2)));
-    c.amount = 2000;
+    const along = t(14 + i * 2.7);
+    const off = t(11) - ((r % t(22)) | 0);
+    node("bitnode", along + off, t(MAP_TILES) - along + off, 1600);
   }
+  node("pixnode", t(32), t(32), 2600);
 
   recomputeSupply(w);
   return w;
@@ -117,17 +127,12 @@ function clamp(v: number, lo: number, hi: number) {
   return v < lo ? lo : v > hi ? hi : v;
 }
 
-export function entityAt(w: World, id: number): Entity | undefined {
-  return id ? w.byId.get(id) : undefined;
-}
-
 function recomputeSupply(w: World) {
   const used = [0, 0], cap = [0, 0];
   for (const e of w.entities) {
     if (e.owner < 0) continue;
     if (STATS[e.kind].building) {
-      if (!e.complete) continue;
-      cap[e.owner]! += e.kind === "base" ? 15 : 10;
+      if (e.complete) cap[e.owner]! += STATS[e.kind].supply;
     } else {
       used[e.owner]! += 1;
     }
@@ -136,6 +141,33 @@ function recomputeSupply(w: World) {
     w.players[p]!.supply = used[p]!;
     w.players[p]!.supplyCap = Math.min(SUPPLY_MAX, cap[p]!);
   }
+}
+
+export function canTrain(building: Kind, unit: Kind): boolean {
+  if (building === "datacenter") return unit === "engineer";
+  if (building === "keyboard") return unit === "face" || unit === "ninja" || unit === "guard" || unit === "wizard" || unit === "vampire";
+  return false;
+}
+
+export function trainableAt(building: Kind): Kind[] {
+  if (building === "datacenter") return ["engineer"];
+  if (building === "keyboard") return ["face", "ninja", "guard", "wizard", "vampire"];
+  return [];
+}
+
+function nodeRes(kind: Kind): Res | null {
+  return kind === "bitnode" ? "bits" : kind === "pixnode" ? "pixels" : null;
+}
+
+export function siteClear(w: World, x: number, y: number, radius: number): boolean {
+  if (x < radius || y < radius || x > MAP_SIZE - radius || y > MAP_SIZE - radius) return false;
+  for (const e of w.entities) {
+    if (!STATS[e.kind].building) continue;
+    const need = radius + STATS[e.kind].radius + 4 * FP;
+    const dx = e.x - x, dy = e.y - y;
+    if (dx * dx + dy * dy < need * need) return false;
+  }
+  return true;
 }
 
 // -------------------------------------------------------------------- commands
@@ -154,7 +186,6 @@ export function applyCommand(w: World, owner: number, cmd: Command) {
       const units = cmd.ids.map(mine).filter((e): e is Entity => !!e && !STATS[e.kind].building);
       formation(units, cmd.x, cmd.y, (e, x, y) => {
         e.order = { kind, x, y, target: 0, build: null };
-        if (e.cargo > 0 && kind === "move") e.cargo = e.cargo; // keep cargo on the move
       });
       break;
     }
@@ -164,37 +195,21 @@ export function applyCommand(w: World, owner: number, cmd: Command) {
       for (const id of cmd.ids) {
         const e = mine(id);
         if (!e || STATS[e.kind].building) continue;
-        if (t.kind === "crystal") {
-          if (e.kind !== "worker") { e.order = { kind: "move", x: t.x, y: t.y, target: 0, build: null }; continue; }
-          e.order = { kind: "harvest", x: t.x, y: t.y, target: t.id, build: null };
-          e.progress = 0;
-        } else if (t.owner === owner) {
-          if (e.kind === "worker" && !t.complete) {
-            e.order = { kind: "build", x: t.x, y: t.y, target: t.id, build: t.kind };
-          } else if (e.kind === "worker" && e.cargo > 0 && t.kind === "base") {
-            e.order = { kind: "returnCargo", x: t.x, y: t.y, target: t.id, build: null };
-          } else {
-            e.order = { kind: "move", x: t.x, y: t.y, target: 0, build: null };
-          }
-        } else if (t.owner >= 0) {
-          e.order = { kind: "attack", x: t.x, y: t.y, target: t.id, build: null };
-        }
+        e.order = contextOrder(e, t, owner);
       }
       break;
     }
     case "build": {
       const s = STATS[cmd.kind];
       const pl = w.players[owner]!;
-      const workers = cmd.ids.map(mine).filter((e): e is Entity => !!e && e.kind === "worker");
-      if (!workers.length || !s.building || pl.crystals < s.cost) break;
+      const crew = cmd.ids.map(mine).filter((e): e is Entity => !!e && e.kind === "engineer");
+      if (!crew.length || !s.building || !affordable(pl, s.cost)) break;
       const x = clamp(cmd.x, s.radius, MAP_SIZE - s.radius);
       const y = clamp(cmd.y, s.radius, MAP_SIZE - s.radius);
       if (!siteClear(w, x, y, s.radius)) break;
-      pl.crystals -= s.cost;
+      pay(pl, s.cost);
       const b = makeEntity(w, cmd.kind, owner, x, y, false);
-      for (const wk of workers) {
-        wk.order = { kind: "build", x, y, target: b.id, build: cmd.kind };
-      }
+      for (const wk of crew) wk.order = { kind: "build", x, y, target: b.id, build: cmd.kind };
       recomputeSupply(w);
       break;
     }
@@ -208,9 +223,9 @@ export function applyCommand(w: World, owner: number, cmd: Command) {
       for (const id of cmd.ids) {
         const b = mine(id);
         if (!b || !b.complete || !canTrain(b.kind, cmd.kind)) continue;
-        if (pl.crystals < s.cost || b.queue.length >= 5) continue;
+        if (!affordable(pl, s.cost) || b.queue.length >= 5) continue;
         if (pl.supply + queued + 1 > pl.supplyCap) continue;
-        pl.crystals -= s.cost;
+        pay(pl, s.cost);
         b.queue.push(cmd.kind);
         if (b.queue.length === 1) b.queueLeft = s.buildTime;
         break; // train from a single building per command
@@ -229,9 +244,15 @@ export function applyCommand(w: World, owner: number, cmd: Command) {
       for (const id of cmd.ids) {
         const b = mine(id);
         if (!b || !b.queue.length) continue;
-        const k = b.queue.pop()!;
-        w.players[owner]!.crystals += STATS[k].cost;
+        pay(w.players[owner]!, STATS[b.queue.pop()!].cost, +1);
         if (!b.queue.length) b.queueLeft = 0;
+      }
+      break;
+    }
+    case "detonate": {
+      for (const id of cmd.ids) {
+        const e = mine(id);
+        if (e && e.kind === "face" && e.level >= MAX_LEVEL) e.hp = 0;
       }
       break;
     }
@@ -245,27 +266,26 @@ export function applyCommand(w: World, owner: number, cmd: Command) {
   }
 }
 
-export function canTrain(building: Kind, unit: Kind): boolean {
-  if (building === "base") return unit === "worker";
-  if (building === "barracks") return unit === "soldier" || unit === "archer";
-  return false;
-}
-
-export function trainableAt(building: Kind): Kind[] {
-  if (building === "base") return ["worker"];
-  if (building === "barracks") return ["soldier", "archer"];
-  return [];
-}
-
-export function siteClear(w: World, x: number, y: number, radius: number): boolean {
-  if (x < radius || y < radius || x > MAP_SIZE - radius || y > MAP_SIZE - radius) return false;
-  for (const e of w.entities) {
-    if (!STATS[e.kind].building) continue;
-    const need = radius + STATS[e.kind].radius + 4 * FP;
-    const dx = e.x - x, dy = e.y - y;
-    if (dx * dx + dy * dy < need * need) return false;
+/** What a right-click on `t` should mean for `e`. */
+function contextOrder(e: Entity, t: Entity, owner: number) {
+  const at = { x: t.x, y: t.y, target: t.id, build: null };
+  const res = nodeRes(t.kind);
+  if (res) {
+    return e.kind === "engineer"
+      ? { kind: "harvest" as const, ...at }
+      : { kind: "move" as const, x: t.x, y: t.y, target: 0, build: null };
   }
-  return true;
+  if (t.owner === owner) {
+    if (e.kind === "engineer" && !t.complete) return { kind: "build" as const, ...at, build: t.kind };
+    if (e.kind === "engineer" && t.kind === "cloud" && t.complete) return { kind: "haul" as const, ...at };
+    if (e.kind === "engineer" && e.cargo > 0 && STATS[t.kind].depot === e.cargoRes) {
+      return { kind: "returnCargo" as const, ...at };
+    }
+    if (e.kind === "face" && t.kind === "feed" && t.complete) return { kind: "enroll" as const, ...at };
+    return { kind: "move" as const, x: t.x, y: t.y, target: 0, build: null };
+  }
+  if (t.owner >= 0) return { kind: "attack" as const, ...at };
+  return { kind: "move" as const, x: t.x, y: t.y, target: 0, build: null };
 }
 
 /** Spread a group order into a grid so units do not all target one point. */
@@ -274,7 +294,7 @@ function formation(units: Entity[], x: number, y: number, set: (e: Entity, x: nu
   if (n === 0) return;
   if (n === 1) { set(units[0]!, x, y); return; }
   const cols = isqrt(n - 1) + 1;
-  const gap = 26 * FP;
+  const gap = 28 * FP;
   for (let i = 0; i < n; i++) {
     const cx = (i % cols) - (cols - 1) / 2;
     const cy = ((i / cols) | 0) - ((n - 1) / cols) / 2;
@@ -290,7 +310,7 @@ export function step(w: World, cmds: { owner: number; cmd: Command }[]) {
   w.paths.refresh(w.entities);
 
   for (const e of w.entities) {
-    if (e.hp <= 0 || e.kind === "crystal") continue;
+    if (e.hp <= 0 || nodeRes(e.kind)) continue;
     if (e.cooldown > 0) e.cooldown--;
     if (STATS[e.kind].building) stepBuilding(w, e);
     else stepUnit(w, e);
@@ -302,8 +322,9 @@ export function step(w: World, cmds: { owner: number; cmd: Command }[]) {
   let dirty = false;
   for (let i = w.entities.length - 1; i >= 0; i--) {
     const e = w.entities[i]!;
-    if (e.hp > 0 && !(e.kind === "crystal" && e.amount <= 0)) continue;
-    w.events.push({ x: e.x, y: e.y, kind: e.kind === "crystal" ? "depleted" : "death" });
+    if (e.hp > 0 && !(nodeRes(e.kind) && e.amount <= 0)) continue;
+    if (e.kind === "face" && e.level >= MAX_LEVEL) detonate(w, e);
+    w.events.push({ x: e.x, y: e.y, kind: nodeRes(e.kind) ? "depleted" : "death" });
     w.entities.splice(i, 1);
     w.byId.delete(e.id);
     if (STATS[e.kind].building) w.paths.invalidate();
@@ -322,17 +343,41 @@ export function step(w: World, cmds: { owner: number; cmd: Command }[]) {
   w.tick++;
 }
 
+/** 😡 goes off. Enemies only — friendly fire would make them unusable. */
+function detonate(w: World, e: Entity) {
+  const r = BLAST_RADIUS * FP;
+  for (const o of w.entities) {
+    if (o.owner < 0 || o.owner === e.owner || o.hp <= 0 || o.id === e.id) continue;
+    const dx = o.x - e.x, dy = o.y - e.y;
+    if (dx * dx + dy * dy > r * r) continue;
+    o.hp -= BLAST_DAMAGE;
+    o.flash = 8;
+  }
+  w.events.push({ x: e.x, y: e.y, kind: "blast", text: "🤯" });
+}
+
 function stepBuilding(w: World, b: Entity) {
   if (!b.complete) return;
+
+  if (b.kind === "cloud" && b.stockBits >= 2 && b.stockPixels >= 1) {
+    if (++b.progress >= CONVERT_TICKS) {
+      b.progress = 0;
+      b.stockBits -= 2;
+      b.stockPixels -= 1;
+      w.players[b.owner]!.slop += 1;
+      w.events.push({ x: b.x, y: b.y - 30 * FP, kind: "float", text: "🤖" });
+    }
+  }
+
   if (!b.queue.length) return;
   b.queueLeft--;
   if (b.queueLeft > 0) return;
   const kind = b.queue.shift()!;
-  const r = STATS[b.kind].radius + STATS[kind].radius + 6 * FP;
+  const r = STATS[b.kind].radius + STATS[kind].radius + 8 * FP;
   const u = makeEntity(w, kind, b.owner, clamp(b.x + r, 0, MAP_SIZE), clamp(b.y + r, 0, MAP_SIZE));
   u.order = { kind: "move", x: b.rallyX, y: b.rallyY, target: 0, build: null };
   b.queueLeft = b.queue.length ? STATS[b.queue[0]!].buildTime : 0;
-  w.events.push({ x: u.x, y: u.y, kind: "spawn" });
+  w.events.push({ x: u.x, y: u.y, kind: "spawn", text: STATS[kind].emoji });
   recomputeSupply(w);
 }
 
@@ -345,9 +390,8 @@ function stepUnit(w: World, e: Entity) {
     case "attackMove": {
       const foe = acquire(w, e);
       if (foe) {
-        if (o.kind === "attackMove") { e.order = { kind: "attack", x: foe.x, y: foe.y, target: foe.id, build: null }; }
-        else if (inRange(e, foe, s.range)) { strike(w, e, foe); return; }
-        else { e.order = { kind: "attack", x: foe.x, y: foe.y, target: foe.id, build: null }; }
+        if (o.kind === "idle" && inRange(e, foe, s.range)) { strike(w, e, foe); return; }
+        e.order = { kind: "attack", x: foe.x, y: foe.y, target: foe.id, build: null };
         return;
       }
       if (o.kind === "attackMove") {
@@ -368,21 +412,27 @@ function stepUnit(w: World, e: Entity) {
     }
     case "harvest": {
       const node = w.byId.get(o.target);
+      const res = node && nodeRes(node.kind);
       if (e.cargo >= CARGO_SIZE) { e.order = { kind: "returnCargo", x: e.x, y: e.y, target: 0, build: null }; return; }
-      if (!node || node.amount <= 0) {
-        const next = nearest(w, e, (c) => c.kind === "crystal" && c.amount > 0);
+      if (!node || !res || node.amount <= 0) {
+        const next = nearest(w, e, (c) => !!nodeRes(c.kind) && c.amount > 0);
         e.order = next
           ? { kind: "harvest", x: next.x, y: next.y, target: next.id, build: null }
           : { ...IDLE };
         e.progress = 0;
         return;
       }
-      if (!inRange(e, node, 6 * FP)) { moveToward(w, e, node.x, node.y, s.speed, 0, node.id); e.progress = 0; return; }
+      if (!inRange(e, node, 6 * FP)) {
+        if (moveToward(w, e, node.x, node.y, s.speed, 0, node.id) || giveUp(e, node.x, node.y)) e.order = { ...IDLE };
+        e.progress = 0;
+        return;
+      }
       e.progress++;
-      if (e.progress >= GATHER_TICKS) {
+      if (e.progress >= (res === "bits" ? BIT_TICKS : PIX_TICKS)) {
         const take = Math.min(CARGO_SIZE, node.amount);
         node.amount -= take;
         e.cargo = take;
+        e.cargoRes = res;
         e.progress = 0;
         e.order = { kind: "returnCargo", x: e.x, y: e.y, target: 0, build: null };
       }
@@ -390,16 +440,22 @@ function stepUnit(w: World, e: Entity) {
     }
     case "returnCargo": {
       let depot = w.byId.get(o.target);
-      if (!depot || depot.owner !== e.owner || !depot.complete || depot.kind !== "base") {
-        depot = nearest(w, e, (b) => b.owner === e.owner && b.kind === "base" && b.complete);
+      if (!acceptsFrom(depot, e)) {
+        depot = nearest(w, e, (b) => acceptsFrom(b, e));
         if (!depot) { e.order = { ...IDLE }; return; }
         o.target = depot.id;
       }
-      if (!inRange(e, depot, 8 * FP)) { moveToward(w, e, depot.x, depot.y, s.speed, 0, depot.id); return; }
-      w.players[e.owner]!.crystals += e.cargo;
+      if (!inRange(e, depot, 8 * FP)) {
+        if (moveToward(w, e, depot.x, depot.y, s.speed, 0, depot.id) || giveUp(e, depot.x, depot.y)) e.order = { ...IDLE };
+        return;
+      }
+      const pl = w.players[e.owner]!;
+      if (e.cargoRes === "bits") pl.bits += e.cargo;
+      else if (e.cargoRes === "pixels") pl.pixels += e.cargo;
+      w.events.push({ x: depot.x, y: depot.y - 26 * FP, kind: "float", text: e.cargoRes === "bits" ? "💾" : "🎨" });
       e.cargo = 0;
-      w.events.push({ x: depot.x, y: depot.y, kind: "deposit" });
-      const node = nearest(w, e, (c) => c.kind === "crystal" && c.amount > 0);
+      e.cargoRes = null;
+      const node = nearest(w, e, (c) => !!nodeRes(c.kind) && c.amount > 0);
       e.order = node
         ? { kind: "harvest", x: node.x, y: node.y, target: node.id, build: null }
         : { ...IDLE };
@@ -407,11 +463,11 @@ function stepUnit(w: World, e: Entity) {
     }
     case "build": {
       const b = w.byId.get(o.target);
-      if (!b || b.complete || b.owner !== e.owner) {
-        e.order = b && b.complete ? { ...IDLE } : { ...IDLE };
+      if (!b || b.complete || b.owner !== e.owner) { e.order = { ...IDLE }; return; }
+      if (!inRange(e, b, BUILD_RANGE)) {
+        if (moveToward(w, e, b.x, b.y, s.speed, 0, b.id) || giveUp(e, b.x, b.y)) e.order = { ...IDLE };
         return;
       }
-      if (!inRange(e, b, BUILD_RANGE)) { moveToward(w, e, b.x, b.y, s.speed, 0, b.id); return; }
       const total = STATS[b.kind].buildTime;
       b.progress++;
       b.hp = Math.min(b.maxHp, Math.max(1, Math.round((b.maxHp * (b.progress + total / 10)) / total)));
@@ -419,16 +475,75 @@ function stepUnit(w: World, e: Entity) {
         b.complete = true;
         b.hp = b.maxHp;
         b.progress = 0;
-        w.events.push({ x: b.x, y: b.y, kind: "built" });
+        w.events.push({ x: b.x, y: b.y, kind: "built", text: "✨" });
         recomputeSupply(w);
-        const node = nearest(w, e, (c) => c.kind === "crystal" && c.amount > 0);
-        e.order = node && e.kind === "worker"
+        const node = nearest(w, e, (c) => !!nodeRes(c.kind) && c.amount > 0);
+        e.order = node
           ? { kind: "harvest", x: node.x, y: node.y, target: node.id, build: null }
           : { ...IDLE };
       }
       return;
     }
+    case "haul": {
+      // Shuttle between the depots and a Cloud, keeping it fed 2 bits to 1 pixel.
+      const cloud = w.byId.get(o.target);
+      if (!cloud || cloud.kind !== "cloud" || cloud.owner !== e.owner || !cloud.complete) { e.order = { ...IDLE }; return; }
+      if (e.cargo > 0) {
+        if (!inRange(e, cloud, 8 * FP)) {
+          if (moveToward(w, e, cloud.x, cloud.y, s.speed, 0, cloud.id) || giveUp(e, cloud.x, cloud.y)) e.order = { ...IDLE };
+          return;
+        }
+        if (e.cargoRes === "bits") cloud.stockBits += e.cargo;
+        else cloud.stockPixels += e.cargo;
+        w.events.push({ x: cloud.x, y: cloud.y - 28 * FP, kind: "float", text: e.cargoRes === "bits" ? "💾" : "🎨" });
+        e.cargo = 0;
+        e.cargoRes = null;
+        return;
+      }
+      const pl = w.players[e.owner]!;
+      const wantPixels = cloud.stockPixels * 2 <= cloud.stockBits;
+      const want: Res = wantPixels && pl.pixels > 0 ? "pixels" : "bits";
+      const store = want === "bits" ? pl.bits : pl.pixels;
+      if (store <= 0) { moveToward(w, e, cloud.x, cloud.y, s.speed, 60 * FP); return; } // idle near the Cloud
+      const src = nearest(w, e, (b) => b.owner === e.owner && b.complete && STATS[b.kind].depot === want);
+      if (!src) { e.order = { ...IDLE }; return; }
+      if (!inRange(e, src, 8 * FP)) {
+        if (moveToward(w, e, src.x, src.y, s.speed, 0, src.id) || giveUp(e, src.x, src.y)) e.order = { ...IDLE };
+        return;
+      }
+      const take = Math.min(CARGO_SIZE, store);
+      if (want === "bits") pl.bits -= take; else pl.pixels -= take;
+      e.cargo = take;
+      e.cargoRes = want;
+      return;
+    }
+    case "enroll": {
+      const feed = w.byId.get(o.target);
+      if (!feed || feed.kind !== "feed" || feed.owner !== e.owner || !feed.complete || e.kind !== "face") {
+        e.order = { ...IDLE }; return;
+      }
+      if (e.level >= MAX_LEVEL) { e.order = { ...IDLE }; return; }
+      if (!inRange(e, feed, 10 * FP)) { moveToward(w, e, feed.x, feed.y, s.speed, 0, feed.id); e.progress = 0; return; }
+      const pl = w.players[e.owner]!;
+      if (e.progress === 0 && !affordable(pl, ENROLL_COST)) return; // wait for slop
+      if (e.progress === 0) pay(pl, ENROLL_COST);
+      if (++e.progress < ENROLL_TICKS) return;
+      e.progress = 0;
+      e.level++;
+      e.maxHp = faceHp(e.level);
+      e.hp = e.maxHp;
+      w.events.push({ x: e.x, y: e.y - 24 * FP, kind: "levelup", text: "😤" });
+      e.order = e.level >= MAX_LEVEL
+        ? { ...IDLE }
+        : { kind: "move", x: feed.rallyX, y: feed.rallyY, target: 0, build: null };
+      return;
+    }
   }
+}
+
+function acceptsFrom(depot: Entity | undefined, e: Entity): depot is Entity {
+  return !!depot && depot.owner === e.owner && depot.complete && !!e.cargoRes
+    && STATS[depot.kind].depot === e.cargoRes;
 }
 
 function inRange(a: Entity, b: Entity, range: number): boolean {
@@ -437,12 +552,18 @@ function inRange(a: Entity, b: Entity, range: number): boolean {
   return dx * dx + dy * dy <= reach * reach;
 }
 
+function damageOf(e: Entity): number {
+  return e.kind === "face" ? faceDamage(e.level) : STATS[e.kind].damage;
+}
+
 function strike(w: World, a: Entity, b: Entity) {
   if (a.cooldown > 0) return;
   const s = STATS[a.kind];
   a.cooldown = s.cooldown;
-  b.hp -= s.damage;
+  const dmg = damageOf(a);
+  b.hp -= dmg;
   b.flash = 6;
+  if (s.lifesteal > 0) a.hp = Math.min(a.maxHp, a.hp + Math.trunc((dmg * s.lifesteal) / 100));
   w.events.push({ x: b.x, y: b.y, kind: s.range > 60 * FP ? "shot" : "hit" });
   // Being shot at pulls idle defenders into the fight.
   if (b.order.kind === "idle" && !STATS[b.kind].building && b.owner >= 0) {
@@ -450,7 +571,12 @@ function strike(w: World, a: Entity, b: Entity) {
   }
 }
 
-/** The first building standing in the way of a straight run at (tx, ty).
+function stepBy(e: Entity, dx: number, dy: number, d: number, speed: number) {
+  e.x = clamp(e.x + Math.trunc((dx * speed) / d), 0, MAP_SIZE);
+  e.y = clamp(e.y + Math.trunc((dy * speed) / d), 0, MAP_SIZE);
+}
+
+/** The first structure standing in the way of a straight run at (tx, ty).
  *  `ignore` is whatever the unit is deliberately walking up to. */
 function blocker(w: World, e: Entity, tx: number, ty: number, ignore: number): Entity | undefined {
   const er = STATS[e.kind].radius;
@@ -461,7 +587,7 @@ function blocker(w: World, e: Entity, tx: number, ty: number, ignore: number): E
   let best: Entity | undefined;
   let bestD = Infinity;
   for (const b of w.entities) {
-    if (!STATS[b.kind].building || b.id === ignore || b.hp <= 0) continue;
+    if (!STATS[b.kind].solid || b.id === ignore || b.hp <= 0) continue;
     const need = STATS[b.kind].radius + er + 2 * FP;
     const rx = b.x - e.x, ry = b.y - e.y;
     let t = Math.trunc((rx * dx + ry * dy) / d); // how far along the path it sits
@@ -475,15 +601,10 @@ function blocker(w: World, e: Entity, tx: number, ty: number, ignore: number): E
   return best;
 }
 
-function stepBy(e: Entity, dx: number, dy: number, d: number, speed: number) {
-  e.x = clamp(e.x + Math.trunc((dx * speed) / d), 0, MAP_SIZE);
-  e.y = clamp(e.y + Math.trunc((dy * speed) / d), 0, MAP_SIZE);
-}
-
 /** One step toward a point.
  *
  *  Open ground is walked in a straight line — that is what looks right and it
- *  costs nothing. Only when a building actually lies across the path does the
+ *  costs nothing. Only when a structure actually lies across the path does the
  *  unit consult the flow field, which routes it around the whole obstruction
  *  rather than letting it grind along one edge. If even the field cannot reach
  *  the goal (walled in, or the goal is inside the obstacle) it falls back to
@@ -531,10 +652,10 @@ function giveUp(e: Entity, tx: number, ty: number): boolean {
 
 function acquire(w: World, e: Entity): Entity | undefined {
   const s = STATS[e.kind];
-  if (s.damage <= 0) return undefined;
+  if (s.damage <= 0 && e.kind !== "face") return undefined;
   // Stagger scans across ticks; cheap and identical on both peers.
   if (((w.tick + e.id) & 3) !== 0) return undefined;
-  const leash = e.order.kind === "attackMove" ? s.sight : (e.kind === "worker" ? s.range * 3 : s.sight);
+  const leash = e.order.kind === "attackMove" ? s.sight : (e.kind === "engineer" ? s.range * 3 : s.sight);
   let best: Entity | undefined;
   let bestD = leash * leash + 1;
   for (const o of w.entities) {
@@ -558,8 +679,9 @@ function nearest(w: World, e: Entity, pred: (o: Entity) => boolean): Entity | un
   return best;
 }
 
-/** Push overlapping units apart. Buckets by tile so it stays linear-ish, and
- *  pairs are visited in id order to keep the result deterministic. */
+/** Push overlapping units apart. The circle used here is exactly the ring the
+ *  renderer draws, so what you see is what collides. Bucketed by tile to stay
+ *  linear-ish, and pairs are visited in id order to stay deterministic. */
 function separate(w: World) {
   const cell = TILE * FP;
   const buckets = new Map<number, Entity[]>();
@@ -594,19 +716,26 @@ function separate(w: World) {
       }
     }
   }
-  // Keep units out of the footprint of buildings.
-  for (const b of w.entities) {
-    if (!STATS[b.kind].building || b.hp <= 0) continue;
-    const br = STATS[b.kind].radius;
-    for (const a of mobile) {
-      const need = br + STATS[a.kind].radius;
-      const dx = a.x - b.x, dy = a.y - b.y;
-      const d2 = dx * dx + dy * dy;
+  // Keep units out of the footprint of structures. Pushes are accumulated and
+  // applied once: snapping to each structure in turn let a unit caught between
+  // two of them ping-pong in place forever instead of squeezing out.
+  const solids = w.entities.filter((b) => STATS[b.kind].solid && b.hp > 0);
+  for (const a of mobile) {
+    let sx = 0, sy = 0;
+    for (const b of solids) {
+      const need = STATS[b.kind].radius + STATS[a.kind].radius;
+      let dx = a.x - b.x, dy = a.y - b.y;
+      let d2 = dx * dx + dy * dy;
       if (d2 >= need * need) continue;
-      const d = isqrt(d2);
-      if (d === 0) { a.x += need; continue; }
-      a.x = clamp(b.x + Math.trunc((dx * need) / d), 0, MAP_SIZE);
-      a.y = clamp(b.y + Math.trunc((dy * need) / d), 0, MAP_SIZE);
+      if (d2 === 0) { dx = (a.id % 5) + 1; dy = (a.id % 3) + 1; d2 = dx * dx + dy * dy; }
+      const d = isqrt(d2) || 1;
+      const push = need - d;
+      sx += Math.trunc((dx * push) / d);
+      sy += Math.trunc((dy * push) / d);
+    }
+    if (sx || sy) {
+      a.x = clamp(a.x + sx, 0, MAP_SIZE);
+      a.y = clamp(a.y + sy, 0, MAP_SIZE);
     }
   }
 }
@@ -616,9 +745,10 @@ export function checksum(w: World): number {
   let h = 0x811c9dc5 ^ w.tick;
   const mix = (v: number) => { h = Math.imul(h ^ (v | 0), 0x01000193) >>> 0; };
   for (const e of w.entities) {
-    mix(e.id); mix(e.x); mix(e.y); mix(e.hp); mix(e.cargo);
+    mix(e.id); mix(e.x); mix(e.y); mix(e.hp); mix(e.cargo); mix(e.level);
     mix(e.order.kind.length * 31 + e.order.target); mix(e.queue.length);
+    mix(e.stockBits * 7 + e.stockPixels);
   }
-  for (const p of w.players) { mix(p.crystals); mix(p.supply); }
+  for (const p of w.players) { mix(p.bits); mix(p.pixels); mix(p.slop); mix(p.supply); }
   return h >>> 0;
 }

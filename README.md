@@ -1,8 +1,9 @@
-# CRYSTAL FRONT
+# EMOJI CLASH
 
-A two-player real-time strategy game that runs entirely in the browser and talks
-peer-to-peer over WebRTC. There is no game server, no signalling server, no lobby
-and no backend — the whole thing is one static HTML file.
+A two-player real-time strategy game that runs entirely in the browser, renders
+itself in system emoji, and talks peer-to-peer over WebRTC. There is no game
+server, no signalling server, no lobby and no backend — the whole thing is one
+static HTML file.
 
 ```
 npm install
@@ -49,6 +50,22 @@ The simulation is driven by a timer rather than `requestAnimationFrame` — a
 backgrounded tab stops painting, and if it stopped simulating it would freeze the
 opponent too.
 
+## Rendering
+
+Everything on the field is a system emoji drawn with `fillText` — no sprites, no
+image assets, nothing fetched. Each glyph is rasterised once into a small
+offscreen canvas and blitted after that, which measured about twice as fast as
+calling `fillText` per entity per frame.
+
+Emoji are colour glyphs, so `fillStyle` does nothing to them: team identity comes
+from the faint ring behind each one. That ring is drawn at exactly the radius the
+simulation separates on, so crowding always looks like what it actually is.
+
+The trade-off is that the same codepoints are drawn by Apple Color Emoji, Segoe
+UI Emoji or Noto Color Emoji depending on the machine, so two players see subtly
+different art. It is cosmetic only — rendering never feeds back into the
+simulation, so it cannot desync a match.
+
 ## Movement
 
 Obstacles are rasterised onto the 64×64 tile grid and each goal gets a Dijkstra
@@ -71,30 +88,59 @@ index — a path that differed by one tile between peers would desync the match.
 | | |
 |---|---|
 | Drag / click | select (double-click picks all of that type on screen) |
-| Right-click | contextual order: move, attack, harvest, deliver, set rally |
+| Right-click | contextual order: move, attack, mine, deliver, haul, enrol, set rally |
 | `A` | attack-move (then left-click a destination) |
-| `B` / `R` | place a Command Base / Barracks with a worker selected |
-| `W` / `S` / `A` | train from selected production buildings |
+| `E` `F` `N` `G` `W` `V` | train Engineer · Smiley · Ninja · Guard · Wizard · Vampire |
+| `D` `Y` `K` `C` `X` `B` | place Drive · Gallery · Keyboard · Cloud · Social Feed · Datacenter |
 | `Ctrl`/`Cmd`+`A` | select every unit of yours on screen |
 | `Ctrl`+`1-9` / `1-9` | assign / recall a control group |
 | `Esc` | cancel a pending attack-move or placement |
 | Arrows, middle-drag, minimap | pan · wheel zooms · `Space` jumps home |
 
-Workers mine crystal and deliver it to a base. Bases train workers and add 15
-supply; barracks train soldiers and archers and add 10. Soldiers hit hard up
-close, archers outrange everything and die quickly. Destroy everything the
-opponent owns to win.
+### The economy
+
+Two raw resources, one refined one.
+
+- **💾 bits** are everywhere and quick to mine. 🧑‍🔧 Engineers deliver them to a
+  **🗄️ Drive**.
+- **🎨 pixels** are five times scarcer and nearly twice as slow to dig. They go
+  to a **🖼️ Gallery**.
+- **☁️ A Cloud** turns **2 bits + 1 pixel** into one **🤖 slop**, the premium
+  currency. It does not draw from your stockpile by itself — right-click a Cloud
+  with an Engineer selected and they become a courier, shuttling from your depots
+  into its intake forever. Slop gates the Wizard, the Vampire and the Social Feed.
+
+You start with a Datacenter, a Drive, a Gallery and four Engineers. Losing a
+depot means that resource stops arriving until you rebuild one.
+
+### The army
+
+**⌨️ A Keyboard** types fighters into existence: 🙂 Smiley (cheap melee),
+🥷 Ninja (fast, fragile, high damage), 💂 Guard (a slow wall), 🧙 Wizard
+(outranges everything), 🧛 Vampire (heals for half the damage it deals).
+
+**📱 A Social Feed** is where Smileys go to lose their temper. Right-click one
+with a 🙂 selected and — for 30💾 and 2🤖 a time — it sours a step:
+
+> 🙂 → 😐 → 🙁 → 😠 → 😡
+
+Each step adds 40% health and 45% damage. A fully radicalised 😡 detonates when
+it dies, 🤯 dealing 70 damage to every enemy within 78 pixels — and you can set
+one off deliberately with the Detonate button. Chain reactions are entirely
+possible and highly encouraged.
+
+Destroy everything the opponent owns to win.
 
 ## Layout
 
 ```
-src/game/types.ts   stats, commands, fixed-point constants
+src/game/types.ts   stats, costs, commands, fixed-point constants
 src/game/sim.ts     the deterministic simulation — integers only
 src/game/flow.ts    obstacle grid and cached flow fields for navigation
 src/game/ai.ts      practice-mode opponent (deterministic, runs inside the sim)
 src/lockstep.ts     turn scheduling, command exchange, checksum comparison
 src/net.ts          WebRTC peer setup and the compressed offer/answer codes
-src/render.ts       canvas rendering, fog of war, minimap
+src/render.ts       emoji glyph cache, rings, fog of war, minimap
 src/main.ts         menu, input, HUD, frame loop
 ```
 

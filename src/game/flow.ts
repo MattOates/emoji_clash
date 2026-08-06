@@ -37,7 +37,7 @@ export class PathCache {
     this.dirty = false;
     this.grid.fill(0);
     for (const e of entities) {
-      if (!STATS[e.kind].building || e.hp <= 0) continue;
+      if (!STATS[e.kind].solid || e.hp <= 0) continue;
       const r = STATS[e.kind].radius + CLEARANCE;
       const lo = (v: number) => Math.max(0, Math.floor((v - r) / CELL));
       const hi = (v: number) => Math.min(G - 1, Math.floor((v + r) / CELL));
@@ -69,7 +69,8 @@ export class PathCache {
    *  (already in the goal tile, or walled off from it). */
   waypoint(goalX: number, goalY: number, x: number, y: number): { x: number; y: number } | null {
     const gx = clampTile(goalX), gy = clampTile(goalY);
-    const f = this.field(gy * G + gx);
+    const goalIdx = gy * G + gx;
+    const f = this.field(goalIdx);
     const tx = clampTile(x), ty = clampTile(y);
     const here = f[ty * G + tx]!;
     let best = -1, bestCost = INF;
@@ -77,8 +78,13 @@ export class PathCache {
       const nx = tx + dx, ny = ty + dy;
       if (nx < 0 || ny < 0 || nx >= G || ny >= G) continue;
       const ni = ny * G + nx;
-      if (this.grid[ni]) continue;
-      if (dx && dy && (this.grid[ty * G + nx] || this.grid[ny * G + tx])) continue; // no corner cutting
+      // The goal tile is walkable-into even when blocked: depots, resource
+      // nodes and structures under attack all sit on obstructed tiles, and
+      // refusing that last step left units orbiting their own drop-off.
+      if (ni !== goalIdx) {
+        if (this.grid[ni]) continue;
+        if (dx && dy && (this.grid[ty * G + nx] || this.grid[ny * G + tx])) continue; // no corner cutting
+      }
       const d = f[ni]!;
       if (d === INF) continue;
       if (d + cost < bestCost) { bestCost = d + cost; best = ni; }
