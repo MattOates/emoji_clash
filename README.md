@@ -6,10 +6,16 @@ server, no signalling server, no lobby and no backend — the whole thing is one
 static HTML file.
 
 ```
-npm install
-npm run dev      # http://localhost:5173
-npm run build    # -> dist/index.html, a single self-contained file
+make install
+make dev         # http://localhost:5173
+make build       # -> dist/index.html, a single self-contained file
+make deploy      # build, then scp that one file to the live site
 ```
+
+`make deploy` publishes to `example:/var/www/emoji-clash`,
+which serves at <https://example.com/emoji-clash>. Because the build inlines
+everything, there are no asset paths to rewrite — the same file works at any URL
+prefix, or off the filesystem.
 
 `dist/index.html` has no external references of any kind. Open it from disk, put
 it on a static host, email it to someone — it works the same everywhere.
