@@ -58,7 +58,9 @@ opponent too.
 | `A` | attack-move (then left-click a destination) |
 | `B` / `R` | place a Command Base / Barracks with a worker selected |
 | `W` / `S` / `A` | train from selected production buildings |
+| `Ctrl`/`Cmd`+`A` | select every unit of yours on screen |
 | `Ctrl`+`1-9` / `1-9` | assign / recall a control group |
+| `Esc` | cancel a pending attack-move or placement |
 | Arrows, middle-drag, minimap | pan · wheel zooms · `Space` jumps home |
 
 Workers mine crystal and deliver it to a base. Bases train workers and add 15

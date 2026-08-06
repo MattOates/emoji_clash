@@ -112,7 +112,10 @@ function start(mode: Mode, me: number, seed: number, net?: Net) {
     };
   }
   lastSim = performance.now();
-  (window as any).rts = { get runner() { return runner; }, cam, selection };
+  (window as any).rts = {
+    get runner() { return runner; }, cam, selection,
+    get armed() { return { placing, attackMoveArmed }; },
+  };
   const home = runner.world.entities.find((e) => e.owner === me && e.kind === "base");
   if (home) centerOn(home.x / FP, home.y / FP);
   toast(mode === "practice" ? "Practice match — build workers, then an army." : "Connected. Good luck.");
@@ -335,7 +338,7 @@ window.addEventListener("keydown", (ev) => {
   keys.add(k);
 
   if (ev.key === "Escape") { placing = null; attackMoveArmed = false; selection.clear(); syncCard(); return; }
-  if (ev.key === "F1") { ev.preventDefault(); toast("LMB drag select · RMB order · A attack-move · B base · R barracks · W/S/A train · Ctrl+1-9 group · Space home"); return; }
+  if (ev.key === "F1") { ev.preventDefault(); toast("LMB drag select · RMB order · A attack-move · B base · R barracks · W/S/A train · Ctrl+A all on screen · Ctrl+1-9 group · Space home"); return; }
   if (k === " ") {
     const home = runner.world.entities.find((e) => e.owner === runner!.me && e.kind === "base");
     if (home) centerOn(home.x / FP, home.y / FP);
@@ -343,14 +346,18 @@ window.addEventListener("keydown", (ev) => {
     return;
   }
 
+  const mod = ev.ctrlKey || ev.metaKey;
+
   if (/^[0-9]$/.test(ev.key)) {
     const n = Number(ev.key);
-    if (ev.ctrlKey || ev.metaKey) {
+    if (mod) {
       groups.set(n, [...selection]);
       toast(`Group ${n} set (${selection.size}).`);
     } else {
       const g = groups.get(n);
       if (g) {
+        placing = null;
+        attackMoveArmed = false;
         selection.clear();
         for (const id of g) if (runner.world.byId.has(id)) selection.add(id);
         syncCard();
@@ -361,6 +368,24 @@ window.addEventListener("keydown", (ev) => {
     return;
   }
 
+  // Ctrl/Cmd+A is muscle memory for "select all", so make it do that rather
+  // than fall through to the A hotkey.
+  if (mod && k === "a") {
+    ev.preventDefault();
+    placing = null;
+    attackMoveArmed = false;
+    selection.clear();
+    for (const e of runner.world.entities)
+      if (e.owner === runner.me && !STATS[e.kind].building && onScreen(e)) selection.add(e.id);
+    syncCard();
+    toast(`Selected ${selection.size} unit${selection.size === 1 ? "" : "s"} on screen.`);
+    return;
+  }
+
+  // Never let a browser/OS shortcut leak into a game hotkey. Cmd+A silently
+  // arming attack-move was invisible, and the next click moved the army.
+  if (mod || ev.altKey) return;
+
   // Training hotkeys act on selected production buildings first.
   const producers = selected().filter((e) => STATS[e.kind].building && e.complete);
   const byHotkey = (Object.keys(STATS) as Kind[]).find((kind) => STATS[kind].hotkey.toLowerCase() === k);
@@ -369,7 +394,7 @@ window.addEventListener("keydown", (ev) => {
     return;
   }
 
-  if (k === "a" && selectedUnits().length) { attackMoveArmed = true; placing = null; return; }
+  if (k === "a" && selectedUnits().length) { attackMoveArmed = !attackMoveArmed; placing = null; return; }
   if ((k === "b" || k === "r") && selectedUnits().some((e) => e.kind === "worker")) {
     placing = k === "b" ? "base" : "barracks";
     attackMoveArmed = false;
@@ -425,12 +450,15 @@ function syncCard() {
     add("Cancel", "refund last", () => issue({ c: "cancel", ids: producers.map((b) => b.id) }));
   }
 
+  // These arm a mode rather than acting immediately, so they toggle: clicking
+  // again backs out instead of leaving the next click booby-trapped.
+  const arm = (kind: Kind) => { placing = placing === kind ? null : kind; attackMoveArmed = false; };
   if (sel.some((e) => e.kind === "worker")) {
-    add("Base [B]", `${STATS.base.cost}◆`, () => (placing = "base"));
-    add("Barracks [R]", `${STATS.barracks.cost}◆`, () => (placing = "barracks"));
+    add("Base [B]", `${STATS.base.cost}◆`, () => arm("base"));
+    add("Barracks [R]", `${STATS.barracks.cost}◆`, () => arm("barracks"));
   }
   if (sel.some((e) => !STATS[e.kind].building)) {
-    add("Attack [A]", "move & engage", () => (attackMoveArmed = true));
+    add("Attack [A]", "move & engage", () => { attackMoveArmed = !attackMoveArmed; placing = null; });
     add("Stop [S]", "hold position", () => issue({ c: "stop", ids: selectedUnits().map((e) => e.id) }));
   }
 }
@@ -512,6 +540,11 @@ function frame(now: number) {
     runner.mode === "practice"
       ? "practice vs AI"
       : `${me === 0 ? "host" : "guest"} · ${runner.rtt}ms · t${world.tick}`;
+  const modeEl = $("mode");
+  modeEl.classList.toggle("hidden", !placing && !attackMoveArmed);
+  if (placing) modeEl.innerHTML = `<b>PLACING ${STATS[placing].label.toUpperCase()}</b> — click a site · right-click or Esc to cancel`;
+  else if (attackMoveArmed) modeEl.innerHTML = "<b>ATTACK-MOVE</b> — click a destination · right-click or Esc to cancel";
+
   const warn = runner.desync
     ? "DESYNC DETECTED"
     : runner.stalledMs > 400
