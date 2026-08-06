@@ -112,7 +112,7 @@ export const STATS: Record<Kind, Stats> = {
   cloud: {
     ...base, solid: true, hp: 760, radius: px(27), building: true, cost: cost(180, 70), buildTime: sec(24),
     sight: px(240), label: "Cloud", hotkey: "C", emoji: "☁️",
-    blurb: "fuses 2 💾 + 1 🎨 into 🤖 slop",
+    blurb: "fuses 2 💾 + 1 🎨 into 🤖 slop — couriers carry it out",
   },
   keyboard: {
     ...base, solid: true, hp: 700, radius: px(25), building: true, cost: cost(140), buildTime: sec(20),
@@ -122,7 +122,7 @@ export const STATS: Record<Kind, Stats> = {
   feed: {
     ...base, solid: true, hp: 620, radius: px(23), building: true, cost: cost(150, 40), buildTime: sec(18),
     sight: px(230), label: "Social Feed", hotkey: "X", emoji: "📱",
-    blurb: "sours 🙂 one step at a time",
+    blurb: "sours 🙂 one step — costs one delivered 🤖 each",
   },
 
   bitnode: {
@@ -176,6 +176,7 @@ export interface Entity {
   level: number; // how sour a face has become
   stockBits: number; // Cloud intake
   stockPixels: number;
+  stockSlop: number; // slop sitting in a Cloud's output, or held at a Feed
   stuck: number; // ticks spent making no headway toward the current goal
   lastD: number; // best distance to that goal so far
   // Render-only interpolation, never read by the simulation.

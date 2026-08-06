@@ -156,9 +156,10 @@ Two raw resources, one refined one.
 - **🎨 pixels** are five times scarcer and nearly twice as slow to dig. They go
   to a **🖼️ Gallery**.
 - **☁️ A Cloud** turns **2 bits + 1 pixel** into one **🤖 slop**, the premium
-  currency. It does not draw from your stockpile by itself — right-click a Cloud
-  with an Engineer selected and they become a courier, shuttling from your depots
-  into its intake forever. Slop gates the Wizard, the Vampire and the Social Feed.
+  currency. Nothing here moves by itself. Right-click a Cloud with an Engineer
+  selected and they become a courier: bits and pixels in from your depots,
+  finished slop out to the Datacenter, forever. Slop gates the Wizard and the
+  Vampire, and it is the only thing that levels a Smiley.
 
 You start with a Datacenter, a Drive, a Gallery and four Engineers. Losing a
 depot means that resource stops arriving until you rebuild one.
@@ -169,12 +170,16 @@ depot means that resource stops arriving until you rebuild one.
 🥷 Ninja (fast, fragile, high damage), 💂 Guard (a slow wall), 🧙 Wizard
 (outranges everything), 🧛 Vampire (heals for half the damage it deals).
 
-**📱 A Social Feed** is where Smileys go to lose their temper. Right-click one
-with a 🙂 selected and — for 30💾 and 2🤖 a time — it sours a step:
+**📱 A Social Feed** is where Smileys go to lose their temper — but it cannot
+conjure slop any more than the Cloud can. Put an Engineer on the Feed and they
+run a second convoy, carrying slop from a Cloud to the Feed's own shelf. Each
+step up costs **one 🤖 that is physically sitting in that building**, plus a few
+seconds of queueing:
 
 > 🙂 → 😐 → 🙁 → 😠 → 😡
 
-Each step adds 40% health and 45% damage. A fully radicalised 😡 detonates when
+Each step adds 40% health and 45% damage. Cut the convoy and the queue stalls —
+levelling is a supply line, not a purchase. A fully radicalised 😡 detonates when
 it dies, 🤯 dealing 70 damage to every enemy within 78 pixels — and you can set
 one off deliberately with the Detonate button. Chain reactions are entirely
 possible and highly encouraged.

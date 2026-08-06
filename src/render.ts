@@ -264,11 +264,15 @@ export class Renderer {
       ctx.fillStyle = "rgba(255,255,255,0.85)";
       for (let i = 0; i < e.queue.length; i++) ctx.fillRect(x - r + i * 6, y + r + 3, 4, 3);
     }
-    if (e.kind === "cloud" && e.complete && (e.stockBits || e.stockPixels)) {
+    // Stock on hand, so you can see a Cloud backing up or a Feed running dry.
+    if (e.complete && (e.kind === "cloud" || e.kind === "feed")) {
+      const label = e.kind === "cloud"
+        ? (e.stockSlop ? `${e.stockBits}·${e.stockPixels} → ${e.stockSlop}🤖` : `${e.stockBits}·${e.stockPixels}`)
+        : `${e.stockSlop}🤖`;
       ctx.font = "9px ui-monospace, monospace";
       ctx.textAlign = "center";
-      ctx.fillStyle = "rgba(255,255,255,0.75)";
-      ctx.fillText(`${e.stockBits}·${e.stockPixels}`, x, y + r + 12);
+      ctx.fillStyle = e.kind === "feed" && e.stockSlop === 0 ? "rgba(255,140,120,0.9)" : "rgba(255,255,255,0.8)";
+      ctx.fillText(label, x, y + r + 12);
     }
     ctx.restore();
   }

@@ -2,7 +2,7 @@ import {
   FP, MAP_TILES, STATS, TILE, BUILDABLE, MAX_LEVEL, RES_EMOJI,
   affordable, costText, type Command, type Entity, type Kind,
 } from "./game/types";
-import { canTrain, siteClear, trainableAt, ENROLL_COST, type World } from "./game/sim";
+import { canTrain, siteClear, trainableAt, ENROLL_SLOP, type World } from "./game/sim";
 import { createRunner, type Mode, type Runner } from "./lockstep";
 import { createGuest, createHost, type Net } from "./net";
 import { COLORS, Renderer, emojiFor, type Camera } from "./render";
@@ -465,7 +465,7 @@ function syncCard() {
     }
   }
   if (sel.some((e) => e.kind === "face" && e.level < MAX_LEVEL)) {
-    add("📱 Send to Feed", costText(ENROLL_COST), () => toast("Right-click a 📱 Social Feed with them selected."));
+    add("📱 Send to Feed", `${ENROLL_SLOP}🤖 per level`, () => toast("Right-click a 📱 Social Feed — it must have 🤖 slop carried in first."));
   }
   if (sel.some((e) => e.kind === "face" && e.level >= MAX_LEVEL)) {
     add("💥 Detonate", "take them with you", () =>
@@ -486,7 +486,8 @@ function syncCardMeta() {
     if (e.owner >= 0) parts.push(`${Math.max(0, e.hp)}/${e.maxHp} hp`);
     if (e.kind === "bitnode" || e.kind === "pixnode") parts.push(`${e.amount} left`);
     if (e.cargo) parts.push(`carrying ${e.cargo}${RES_EMOJI[e.cargoRes ?? "bits"]}`);
-    if (e.kind === "cloud" && e.complete) parts.push(`intake ${e.stockBits}💾 ${e.stockPixels}🎨`);
+    if (e.kind === "cloud" && e.complete) parts.push(`intake ${e.stockBits}💾 ${e.stockPixels}🎨 · ${e.stockSlop}🤖 awaiting pickup`);
+    if (e.kind === "feed" && e.complete) parts.push(`${e.stockSlop}🤖 in stock`);
     if (e.kind === "face") {
       parts.push(e.level >= MAX_LEVEL ? "fully radicalised — detonates on death"
         : `mood ${e.level + 1}/${MAX_LEVEL + 1}`);

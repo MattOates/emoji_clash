@@ -31,12 +31,17 @@ export function aiCommands(w: World, me: number): Command[] {
 
   // Idle engineers go dig — every third on pixels, every fourth seconded to
   // a Cloud once one exists.
-  // A Cloud is useless without couriers, and couriers never go idle, so they
-  // are conscripted from the mining crew rather than waiting for spare hands.
-  const haulers = crew.filter((e) => e.order.kind === "haul").length;
-  if (clouds.length && haulers < 3) {
+  // Couriers never go idle, so they are conscripted from the mining crew rather
+  // than waiting for spare hands. Two runs need staffing: inputs into the Cloud
+  // and finished slop out of it, then slop from the Cloud along to the Feed.
+  const hauling = (id: number) => crew.filter((e) => e.order.kind === "haul" && e.order.target === id).length;
+  if (clouds.length && hauling(clouds[0]!.id) < 3) {
     const spare = crew.find((e) => e.order.kind === "harvest");
     if (spare) out.push({ c: "target", ids: [spare.id], id: clouds[0]!.id });
+  }
+  if (feeds.length && clouds.length && hauling(feeds[0]!.id) < 1) {
+    const spare = crew.find((e) => e.order.kind === "harvest");
+    if (spare) out.push({ c: "target", ids: [spare.id], id: feeds[0]!.id });
   }
 
   let idleSeen = 0;
@@ -82,7 +87,7 @@ export function aiCommands(w: World, me: number): Command[] {
 
   // Radicalise a smiley whenever there is slop to spare.
   const enrolling = new Set<number>();
-  if (feeds.length && pl.slop >= 4) {
+  if (feeds.length && feeds[0]!.stockSlop >= 1) {
     const calm = mine.filter((e) => e.kind === "face" && e.level < MAX_LEVEL && e.order.kind === "idle");
     if (calm.length) {
       out.push({ c: "target", ids: [calm[0]!.id], id: feeds[0]!.id });

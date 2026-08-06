@@ -37,7 +37,8 @@ export const ENROLL_TICKS = 70;
 export const CONVERT_TICKS = 26;
 export const SUPPLY_MAX = 120;
 export const LANE_BIAS = 12; // percent of a step that may be spent moving sideways
-export const ENROLL_COST = { bits: 30, pixels: 0, slop: 2 };
+export const ENROLL_SLOP = 1; // slop consumed from the Feed's own store per level
+export const SLOP_CARGO = 4; // a courier load of slop
 
 export interface World {
   tick: number;
@@ -64,7 +65,7 @@ function makeEntity(w: World, kind: Kind, owner: number, x: number, y: number, c
     order: { ...IDLE }, cooldown: 0, cargo: 0, cargoRes: null, amount: 0, progress: 0,
     complete, queue: [], queueLeft: 0,
     rallyX: x, rallyY: y + 62 * FP,
-    level: 0, stockBits: 0, stockPixels: 0,
+    level: 0, stockBits: 0, stockPixels: 0, stockSlop: 0,
     stuck: 0, lastD: 0,
     px: x, py: y, flash: 0,
   };
@@ -284,7 +285,9 @@ function contextOrder(e: Entity, t: Entity, owner: number) {
   }
   if (t.owner === owner) {
     if (e.kind === "engineer" && !t.complete) return { kind: "build" as const, ...at, build: t.kind };
-    if (e.kind === "engineer" && t.kind === "cloud" && t.complete) return { kind: "haul" as const, ...at };
+    if (e.kind === "engineer" && (t.kind === "cloud" || t.kind === "feed") && t.complete) {
+      return { kind: "haul" as const, ...at };
+    }
     if (e.kind === "engineer" && e.cargo > 0 && STATS[t.kind].depot === e.cargoRes) {
       return { kind: "returnCargo" as const, ...at };
     }
@@ -375,7 +378,7 @@ function stepBuilding(w: World, b: Entity) {
       b.progress = 0;
       b.stockBits -= 2;
       b.stockPixels -= 1;
-      w.players[b.owner]!.slop += 1;
+      b.stockSlop += 1; // sits in the Cloud until somebody carries it out
       w.events.push({ x: b.x, y: b.y - 30 * FP, kind: "float", text: "🤖" });
     }
   }
@@ -497,26 +500,70 @@ function stepUnit(w: World, e: Entity) {
       return;
     }
     case "haul": {
-      // Shuttle between the depots and a Cloud, keeping it fed 2 bits to 1 pixel.
-      const cloud = w.byId.get(o.target);
-      if (!cloud || cloud.kind !== "cloud" || cloud.owner !== e.owner || !cloud.complete) { e.order = { ...IDLE }; return; }
+      // One order, two runs. Sent to a Cloud, an Engineer feeds it bits and
+      // pixels and carries the finished slop out to the treasury. Sent to a
+      // Feed, they fetch slop from a Cloud and stock the Feed with it — which
+      // is the only way a Smiley ever gets to level up.
+      const dest = w.byId.get(o.target);
+      if (!dest || dest.owner !== e.owner || !dest.complete) { e.order = { ...IDLE }; return; }
+      if (dest.kind !== "cloud" && dest.kind !== "feed") { e.order = { ...IDLE }; return; }
+      const pl = w.players[e.owner]!;
+
       if (e.cargo > 0) {
-        if (!inRange(e, cloud, 8 * FP)) {
-          if (moveToward(w, e, cloud.x, cloud.y, s.speed, 0, cloud.id) || giveUp(e, cloud.x, cloud.y)) e.order = { ...IDLE };
+        // Slop always ends up somewhere specific; raw inputs go to the Cloud.
+        let drop = dest;
+        if (e.cargoRes === "slop" && dest.kind === "cloud") {
+          const bank = nearest(w, e, (b) => b.owner === e.owner && b.kind === "datacenter" && b.complete);
+          if (!bank) { e.order = { ...IDLE }; return; }
+          drop = bank;
+        }
+        if (!inRange(e, drop, 8 * FP)) {
+          if (moveToward(w, e, drop.x, drop.y, s.speed, 0, drop.id) || giveUp(e, drop.x, drop.y)) e.order = { ...IDLE };
           return;
         }
-        if (e.cargoRes === "bits") cloud.stockBits += e.cargo;
-        else cloud.stockPixels += e.cargo;
-        w.events.push({ x: cloud.x, y: cloud.y - 28 * FP, kind: "float", text: e.cargoRes === "bits" ? "💾" : "🎨" });
+        if (e.cargoRes === "slop") {
+          if (drop.kind === "feed") drop.stockSlop += e.cargo;
+          else pl.slop += e.cargo;
+        } else if (e.cargoRes === "bits") drop.stockBits += e.cargo;
+        else drop.stockPixels += e.cargo;
+        w.events.push({ x: drop.x, y: drop.y - 28 * FP, kind: "float",
+          text: e.cargoRes === "slop" ? "🤖" : e.cargoRes === "bits" ? "💾" : "🎨" });
         e.cargo = 0;
         e.cargoRes = null;
         return;
       }
-      const pl = w.players[e.owner]!;
-      const wantPixels = cloud.stockPixels * 2 <= cloud.stockBits;
+
+      if (dest.kind === "feed") {
+        // Empty, on Feed duty: find a Cloud with slop to spare.
+        const src = nearest(w, e, (b) => b.owner === e.owner && b.kind === "cloud" && b.complete && b.stockSlop > 0);
+        if (!src) { moveToward(w, e, dest.x, dest.y, s.speed, 70 * FP); return; } // loiter by the Feed
+        if (!inRange(e, src, 8 * FP)) {
+          if (moveToward(w, e, src.x, src.y, s.speed, 0, src.id) || giveUp(e, src.x, src.y)) e.order = { ...IDLE };
+          return;
+        }
+        const take = Math.min(SLOP_CARGO, src.stockSlop);
+        src.stockSlop -= take;
+        e.cargo = take;
+        e.cargoRes = "slop";
+        return;
+      }
+
+      // Empty, on Cloud duty. Clearing finished slop beats hauling more input.
+      if (dest.stockSlop >= SLOP_CARGO || (dest.stockSlop > 0 && dest.stockBits >= 2 && dest.stockPixels >= 1)) {
+        if (!inRange(e, dest, 8 * FP)) {
+          if (moveToward(w, e, dest.x, dest.y, s.speed, 0, dest.id) || giveUp(e, dest.x, dest.y)) e.order = { ...IDLE };
+          return;
+        }
+        const take = Math.min(SLOP_CARGO, dest.stockSlop);
+        dest.stockSlop -= take;
+        e.cargo = take;
+        e.cargoRes = "slop";
+        return;
+      }
+      const wantPixels = dest.stockPixels * 2 <= dest.stockBits;
       const want: Res = wantPixels && pl.pixels > 0 ? "pixels" : "bits";
       const store = want === "bits" ? pl.bits : pl.pixels;
-      if (store <= 0) { moveToward(w, e, cloud.x, cloud.y, s.speed, 60 * FP); return; } // idle near the Cloud
+      if (store <= 0) { moveToward(w, e, dest.x, dest.y, s.speed, 60 * FP); return; }
       const src = nearest(w, e, (b) => b.owner === e.owner && b.complete && STATS[b.kind].depot === want);
       if (!src) { e.order = { ...IDLE }; return; }
       if (!inRange(e, src, 8 * FP)) {
@@ -536,9 +583,9 @@ function stepUnit(w: World, e: Entity) {
       }
       if (e.level >= MAX_LEVEL) { e.order = { ...IDLE }; return; }
       if (!inRange(e, feed, 10 * FP)) { moveToward(w, e, feed.x, feed.y, s.speed, 0, feed.id); e.progress = 0; return; }
-      const pl = w.players[e.owner]!;
-      if (e.progress === 0 && !affordable(pl, ENROLL_COST)) return; // wait for slop
-      if (e.progress === 0) pay(pl, ENROLL_COST);
+      // The slop has to be here, in this building, carried in by somebody.
+      if (e.progress === 0 && feed.stockSlop < ENROLL_SLOP) return; // queue and wait
+      if (e.progress === 0) feed.stockSlop -= ENROLL_SLOP;
       if (++e.progress < ENROLL_TICKS) return;
       e.progress = 0;
       e.level++;
@@ -867,7 +914,7 @@ export function checksum(w: World): number {
   for (const e of w.entities) {
     mix(e.id); mix(e.x); mix(e.y); mix(e.hp); mix(e.cargo); mix(e.level);
     mix(e.order.kind.length * 31 + e.order.target); mix(e.queue.length);
-    mix(e.stockBits * 7 + e.stockPixels);
+    mix(e.stockBits * 7 + e.stockPixels * 13 + e.stockSlop * 29);
   }
   for (const p of w.players) { mix(p.bits); mix(p.pixels); mix(p.slop); mix(p.supply); }
   return h >>> 0;
