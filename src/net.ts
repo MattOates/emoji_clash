@@ -15,26 +15,13 @@ import Peer, { type DataConnection } from "peerjs";
 
 // No look-alike characters: these codes get read down phone calls.
 const ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-const NAMESPACE = "emojiclash-"; // keeps us out of other apps' id space
 const CONNECT_TIMEOUT = 45000;
 
-// PeerJS ships its own free TURN servers, but they are heavily shared and drop
-// out often — and "introduced by the broker, then cannot connect" is exactly
-// what a missing relay looks like. Two peers on one LAN hit this too: Chrome
-// hides local addresses behind mDNS .local candidates, and if mDNS is blocked
-// the only fallback is STUN, which needs a router willing to hairpin traffic
-// back inside. Many will not. So a second, independent relay is listed, with
-// TCP/443 last because it looks like ordinary HTTPS and survives networks that
-// drop everything else.
-const ICE: RTCIceServer[] = [
-  { urls: "stun:stun.l.google.com:19302" },
-  { urls: "turn:eu-0.turn.peerjs.com:3478", username: "peerjs", credential: "peerjsp" },
-  { urls: "turn:us-0.turn.peerjs.com:3478", username: "peerjs", credential: "peerjsp" },
-  { urls: "turn:openrelay.metered.ca:80", username: "openrelayproject", credential: "openrelayproject" },
-  { urls: "turn:openrelay.metered.ca:443", username: "openrelayproject", credential: "openrelayproject" },
-  { urls: "turn:openrelay.metered.ca:443?transport=tcp", username: "openrelayproject", credential: "openrelayproject" },
-];
-const PEER_OPTS = { debug: 2, config: { iceServers: ICE, iceCandidatePoolSize: 4 } };
+// Deliberately no custom ICE config and no id prefix: this now matches, line
+// for line, a deployment of this broker that is known to work across NAT. The
+// defaults already include Google STUN and two PeerJS TURN relays. Anything
+// added back here should be added one piece at a time and re-tested.
+const PEER_OPTS = { debug: 2 };
 
 export function newRoomCode(): string {
   const r = new Uint8Array(5);
@@ -140,7 +127,7 @@ export function hostRoom(
   onOpen?: () => void,
 ): Promise<Net> {
   return new Promise((resolve, reject) => {
-    const peer = new Peer(NAMESPACE + code, PEER_OPTS);
+    const peer = new Peer(code, PEER_OPTS);
     let settled = false;
     // Only announce the code once the broker has actually registered it.
     // Showing it first meant a failed registration looked identical to a
@@ -183,7 +170,7 @@ export function joinRoom(code: string, log?: (s: string) => void): Promise<Net> 
       if (settled) return;
       tries++;
       log?.(tries === 1 ? "Found the broker, knocking on the room…" : `Room not answering, retry ${tries}/6…`);
-      const conn = peer.connect(NAMESPACE + code, { reliable: true });
+      const conn = peer.connect(code, { reliable: true });
       traceIce(conn, "guest", log);
       whenOpen(conn, () => {
         if (settled) return;
