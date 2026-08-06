@@ -20,9 +20,11 @@ make deploy      # scp it to a server of your own
 it on a static host, email it to someone — it works the same everywhere, at any
 URL prefix.
 
-Deployment settings live in an untracked `deploy.local.mk` (see
-`deploy.local.mk.example`), or pass them inline:
-`make deploy HOST=myserver REMOTE_DIR=/var/www/game`.
+Deployment settings stay out of the repo. With [direnv](https://direnv.net),
+copy `.envrc.example` to `.envrc`, fill it in and run `direnv allow` — the
+variables are then picked up automatically whenever you are in the directory.
+Exporting them by hand or passing them inline works just as well:
+`make deploy EC_DEPLOY_HOST=myserver EC_DEPLOY_DIR=/var/www/game`.
 
 ### Music
 

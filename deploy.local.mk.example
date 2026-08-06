@@ -1,4 +1,0 @@
-# Copy to deploy.local.mk (untracked) and fill in your own server.
-HOST       = myserver
-REMOTE_DIR = /var/www/emoji-clash
-URL        = https://example.com/emoji-clash

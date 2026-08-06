@@ -4,14 +4,14 @@
 # landing in one directory. Nothing in the page depends on where it is served
 # from, which is why any URL prefix works with no configuration.
 #
-# Deployment settings are personal, so they live in an untracked deploy.local.mk.
-# Copy deploy.local.mk.example to get started, or pass them on the command line:
-#   make deploy HOST=myserver REMOTE_DIR=/var/www/game
+# Deployment settings are personal and stay out of the repo. Put them in an
+# untracked .envrc for direnv (copy .envrc.example, then `direnv allow`), export
+# them yourself, or pass them inline:
+#   make deploy EC_DEPLOY_HOST=myserver EC_DEPLOY_DIR=/var/www/game
 
-HOST       ?= example
-REMOTE_DIR ?= /var/www/emoji-clash
-URL        ?= https://example.com/emoji-clash
--include deploy.local.mk
+HOST       ?= $(or $(EC_DEPLOY_HOST),example)
+REMOTE_DIR ?= $(or $(EC_DEPLOY_DIR),/var/www/emoji-clash)
+URL        ?= $(or $(EC_DEPLOY_URL),https://example.com/emoji-clash)
 
 .DEFAULT_GOAL := help
 
@@ -50,6 +50,9 @@ pages: build ## Copy the build into docs/ for GitHub Pages
 
 .PHONY: deploy
 deploy: build ## Build, then publish to your own server
+	@test "$(HOST)" != "example" || { \
+		echo "EC_DEPLOY_HOST is not set — copy .envrc.example to .envrc and run 'direnv allow'"; \
+		exit 1; }
 	@echo "deploying to $(HOST):$(REMOTE_DIR)"
 	ssh $(HOST) 'mkdir -p $(REMOTE_DIR)'
 	scp dist/index.html $(HOST):$(REMOTE_DIR)/index.html

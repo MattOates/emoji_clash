@@ -1,0 +1,5 @@
+# Copy to .envrc, fill in your own server, then run: direnv allow
+# .envrc is gitignored — these never reach the repo.
+export EC_DEPLOY_HOST=myserver
+export EC_DEPLOY_DIR=/var/www/emoji-clash
+export EC_DEPLOY_URL=https://example.com/emoji-clash
