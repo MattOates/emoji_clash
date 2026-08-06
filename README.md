@@ -170,7 +170,7 @@ depot means that resource stops arriving until you rebuild one.
 **⌨️ A Keyboard** types fighters into existence: 🙂 Smiley (cheap melee),
 🥷 Ninja (fast, fragile, high damage), 💂 Guard (a slow wall), 🐒 Monkey, 🧙 Wizard
 (outranges everything, throws ✨), 🧛 Vampire (heals for half the damage it deals).
-The 🏢 Datacenter also makes 🧹 Janitors.
+The 🏢 Datacenter also makes 👨🏻‍🔧 Janitors.
 
 **🐒 The Monkey** is a disruption unit, not a damage dealer. It lobs 💩 at enemies
 from range like any skirmisher, but its real job is `P` — **fouling ground**. It
@@ -182,7 +182,8 @@ leaves a 💩 lying wherever you click, on a 8-second cooldown, and a fouled til
 
 Drop a few across an opponent's Drive run and their whole economy staggers.
 Nothing removes it on its own — no decay, no timer. The only counter is a
-🧹 **Janitor**, who scrubs a fouling away in about two seconds and will hunt down
+👨🏻‍🔧 **Janitor**, who carries a 🧹 while on the job, scrubs a fouling away in about two
+seconds, and will hunt down
 any mess within range of itself without being told.
 
 **📱 A Social Feed** is where Smileys go to lose their temper — but it cannot

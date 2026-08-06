@@ -262,7 +262,18 @@ export class Renderer {
       ctx.fillStyle = hp > 0.5 ? "#5ddc86" : hp > 0.25 ? "#e8c650" : "#e8564f";
       ctx.fillRect(x - r, y - r - 9, r * 2 * hp, 4);
     }
-    if (e.cargo > 0) drawGlyph(ctx, e.cargoRes === "bits" ? "💾" : "🎨", x + r * 0.8, y - r * 0.8, 11);
+    if (e.cargo > 0) {
+      drawGlyph(ctx, e.cargoRes === "bits" ? "💾" : "🎨" , x + r * 0.8, y - r * 0.8, 11);
+    }
+    // A Janitor looks like anyone else until there is mess to deal with, so the
+    // broom only comes out on the job — and waggles while actually scrubbing.
+    if (e.kind === "janitor" && e.order.kind === "clean") {
+      ctx.save();
+      ctx.translate(x + r * 0.85, y - r * 0.5);
+      if (e.progress > 0) ctx.rotate(Math.sin(e.progress * 0.5) * 0.5);
+      drawGlyph(ctx, "🧹", 0, 0, 13);
+      ctx.restore();
+    }
     if (e.owner === me && e.queue.length) {
       ctx.fillStyle = "rgba(255,255,255,0.85)";
       for (let i = 0; i < e.queue.length; i++) ctx.fillRect(x - r + i * 6, y + r + 3, 4, 3);

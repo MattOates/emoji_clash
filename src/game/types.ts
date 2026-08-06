@@ -80,7 +80,7 @@ export const STATS: Record<Kind, Stats> = {
   janitor: {
     ...base, hp: 70, radius: px(9), speed: px(1.55), damage: 0, range: 0, cooldown: 0,
     cost: cost(60, 10), buildTime: sec(9), sight: px(200),
-    label: "Janitor", hotkey: "J", emoji: "🧹", blurb: "scrubs 💩 off the map",
+    label: "Janitor", hotkey: "J", emoji: "👨🏻‍🔧", blurb: "scrubs 💩 off the map",
   },
   face: {
     ...base, hp: 100, radius: px(9), speed: px(1.3), damage: 8, range: px(14), cooldown: 14,
