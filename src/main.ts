@@ -34,11 +34,16 @@ $("btnPractice").onclick = () => start("practice", 0, (Math.random() * 2 ** 31) 
 $("btnHost").onclick = async () => {
   const code = newRoomCode();
   showPane("host");
-  $("roomCode").textContent = code;
-  $<HTMLInputElement>("roomLink").value = roomLink(code);
+  $("roomCode").textContent = "…";
+  $<HTMLInputElement>("roomLink").value = "";
   setStatus("Opening the room…");
   try {
-    const net = await hostRoom(code, (m) => setStatus(m));
+    // The code only appears once the broker confirms the room exists, so you
+    // can never hand out a code that was never registered.
+    const net = await hostRoom(code, (m) => setStatus(m), () => {
+      $("roomCode").textContent = code;
+      $<HTMLInputElement>("roomLink").value = roomLink(code);
+    });
     // The host owns the seed, so both sides build the same world.
     const seed = (Math.random() * 2 ** 31) | 0;
     net.send({ t: "start", seed });

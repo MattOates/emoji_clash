@@ -134,11 +134,22 @@ function fail(peer: Peer, err: any): Error {
 }
 
 /** Claim a room code and wait for somebody to walk in. */
-export function hostRoom(code: string, log?: (s: string) => void): Promise<Net> {
+export function hostRoom(
+  code: string,
+  log?: (s: string) => void,
+  onOpen?: () => void,
+): Promise<Net> {
   return new Promise((resolve, reject) => {
     const peer = new Peer(NAMESPACE + code, PEER_OPTS);
     let settled = false;
-    peer.on("open", () => log?.("Room open — waiting for your opponent…"));
+    // Only announce the code once the broker has actually registered it.
+    // Showing it first meant a failed registration looked identical to a
+    // working room, and the guest got "could not connect to peer".
+    peer.on("open", () => { log?.("Room open — waiting for your opponent…"); onOpen?.(); });
+    peer.on("disconnected", () => {
+      log?.("Lost the broker — reconnecting…");
+      if (!settled) peer.reconnect();
+    });
     peer.on("connection", (conn) => {
       if (settled) { conn.close(); return; } // one opponent per room
       log?.("Someone is joining…");
@@ -167,8 +178,11 @@ export function joinRoom(code: string, log?: (s: string) => void): Promise<Net> 
     const giveUp = setTimeout(() => {
       if (!settled) reject(fail(peer, { message: "timed out waiting for the channel to open — check the console for PeerJS and ICE lines" }));
     }, CONNECT_TIMEOUT);
-    peer.on("open", () => {
-      log?.("Found the broker, knocking on the room…");
+    let tries = 0;
+    const attempt = () => {
+      if (settled) return;
+      tries++;
+      log?.(tries === 1 ? "Found the broker, knocking on the room…" : `Room not answering, retry ${tries}/6…`);
       const conn = peer.connect(NAMESPACE + code, { reliable: true });
       traceIce(conn, "guest", log);
       whenOpen(conn, () => {
@@ -178,8 +192,15 @@ export function joinRoom(code: string, log?: (s: string) => void): Promise<Net> 
         log?.("Connected.");
         resolve(wrap(peer, conn));
       });
-      conn.on("error", (err) => { if (!settled) { clearTimeout(giveUp); reject(fail(peer, err)); } });
+    };
+    peer.on("open", attempt);
+    // "peer-unavailable" only means the room is not there *yet* — a host that
+    // has just clicked Host may still be registering. Retry before giving up.
+    peer.on("error", (err: any) => {
+      if (settled) return;
+      if (err?.type === "peer-unavailable" && tries < 6) { setTimeout(attempt, 2000); return; }
+      clearTimeout(giveUp);
+      reject(fail(peer, err));
     });
-    peer.on("error", (err) => { if (!settled) { clearTimeout(giveUp); reject(fail(peer, err)); } });
   });
 }
