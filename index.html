@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+    <title>CRYSTAL FRONT — serverless RTS</title>
+    <style>
+      :root {
+        --bg: #05080d;
+        --ink: #d8e6f2;
+        --dim: #7d93a8;
+        --line: rgba(120, 200, 255, 0.18);
+        --panel: rgba(9, 15, 23, 0.86);
+        --accent: #57c9ff;
+        --accent2: #ff8a5c;
+        --good: #6ee7a0;
+        --bad: #ff6b5e;
+        font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--ink); }
+      canvas { display: block; width: 100vw; height: 100vh; cursor: crosshair; }
+      button {
+        font: inherit; color: var(--ink); background: rgba(30, 48, 66, 0.7);
+        border: 1px solid var(--line); border-radius: 7px; padding: 8px 13px; cursor: pointer;
+        transition: background 0.12s, border-color 0.12s, transform 0.06s;
+      }
+      button:hover:not(:disabled) { background: rgba(50, 84, 116, 0.85); border-color: var(--accent); }
+      button:active:not(:disabled) { transform: translateY(1px); }
+      button:disabled { opacity: 0.38; cursor: not-allowed; }
+      button.primary { background: linear-gradient(180deg, #1d5f83, #123f5c); border-color: #3ea9d8; }
+      textarea {
+        width: 100%; height: 92px; resize: none; font: 11px/1.45 ui-monospace, Menlo, monospace;
+        color: var(--ink); background: #060b12; border: 1px solid var(--line); border-radius: 7px; padding: 8px;
+        word-break: break-all;
+      }
+      .hidden { display: none !important; }
+
+      #menu {
+        position: fixed; inset: 0; display: grid; place-items: center;
+        background: radial-gradient(ellipse at 50% 35%, #0d1a26, #04070b 70%); z-index: 40;
+      }
+      .card {
+        width: min(560px, 92vw); background: var(--panel); border: 1px solid var(--line);
+        border-radius: 16px; padding: 26px 28px; box-shadow: 0 30px 90px rgba(0, 0, 0, 0.6);
+        backdrop-filter: blur(8px);
+      }
+      h1 { margin: 0 0 4px; font-size: 30px; letter-spacing: 0.16em; }
+      h1 span { color: var(--accent); }
+      .sub { color: var(--dim); font-size: 12.5px; line-height: 1.6; margin-bottom: 20px; }
+      .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+      .row.stack { flex-direction: column; align-items: stretch; }
+      .step { color: var(--dim); font-size: 11.5px; margin: 14px 0 6px; letter-spacing: 0.08em; text-transform: uppercase; }
+      label.chk { display: flex; gap: 8px; align-items: center; color: var(--dim); font-size: 12px; cursor: pointer; }
+      .status { font-size: 12px; color: var(--dim); margin-top: 12px; min-height: 16px; }
+      .status.err { color: var(--bad); }
+      .status.ok { color: var(--good); }
+
+      #hud { position: fixed; inset: 0; pointer-events: none; z-index: 20; font-size: 12px; }
+      #top {
+        position: absolute; top: 0; left: 0; right: 0; display: flex; gap: 18px; align-items: center;
+        padding: 9px 16px; background: linear-gradient(180deg, rgba(5, 9, 14, 0.92), rgba(5, 9, 14, 0));
+      }
+      #top b { color: #fff; font-weight: 600; }
+      .pill { display: flex; gap: 6px; align-items: center; color: var(--dim); }
+      .pill i { width: 9px; height: 9px; border-radius: 3px; background: var(--accent); font-style: normal; }
+      .pill.crystal i { background: #c58bff; }
+      .pill.supply i { background: #6ee7a0; }
+      #spacer { flex: 1; }
+      #warn { color: var(--bad); }
+
+      #card {
+        position: absolute; right: 14px; bottom: 14px; width: 292px; pointer-events: auto;
+        background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px;
+      }
+      #card h3 { margin: 0 0 3px; font-size: 13px; letter-spacing: 0.06em; }
+      #card .meta { color: var(--dim); font-size: 11px; margin-bottom: 9px; }
+      .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+      .grid button { padding: 7px 4px; font-size: 11px; text-align: center; line-height: 1.35; }
+      .grid button b { display: block; font-size: 11.5px; }
+      .grid button small { color: var(--dim); font-size: 10px; }
+      #hint { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); color: var(--dim); font-size: 11.5px; }
+      #toasts { position: absolute; top: 44px; left: 50%; transform: translateX(-50%); display: grid; gap: 6px; justify-items: center; }
+      .toast { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px; }
+
+      #over { position: fixed; inset: 0; display: grid; place-items: center; background: rgba(3, 6, 10, 0.8); z-index: 30; }
+      #over h2 { font-size: 40px; margin: 0 0 10px; letter-spacing: 0.14em; }
+    </style>
+  </head>
+  <body>
+    <canvas id="game"></canvas>
+
+    <div id="hud" class="hidden">
+      <div id="top">
+        <span class="pill crystal"><i></i><b id="crystals">0</b> crystals</span>
+        <span class="pill supply"><i></i><b id="supply">0/0</b> supply</span>
+        <span id="spacer"></span>
+        <span id="warn"></span>
+        <span class="pill"><i></i><span id="netinfo">practice</span></span>
+      </div>
+      <div id="toasts"></div>
+      <div id="card" class="hidden">
+        <h3 id="cardTitle">—</h3>
+        <div class="meta" id="cardMeta"></div>
+        <div class="grid" id="cardActions"></div>
+      </div>
+      <div id="hint">
+        drag&nbsp;select · right-click&nbsp;order · <b>A</b>&nbsp;attack-move · <b>B/R</b>&nbsp;build · <b>arrows</b>&nbsp;pan · <b>wheel</b>&nbsp;zoom · <b>F1</b>&nbsp;help
+      </div>
+    </div>
+
+    <div id="menu">
+      <div class="card">
+        <h1>CRYSTAL <span>FRONT</span></h1>
+        <div class="sub">
+          A peer-to-peer real-time strategy game. Two browsers talk directly over WebRTC —
+          there is no game server, no lobby, and no backend. Swap one code with your
+          opponent and the match runs entirely between you.
+        </div>
+
+        <div class="row" id="modeButtons">
+          <button class="primary" id="btnPractice">Practice vs AI</button>
+          <button id="btnHost">Host a match</button>
+          <button id="btnJoin">Join a match</button>
+        </div>
+        <div class="row" style="margin-top: 12px">
+          <label class="chk"><input type="checkbox" id="useStun" checked /> use public STUN (uncheck for LAN / offline-only)</label>
+        </div>
+
+        <div id="hostPane" class="hidden">
+          <div class="step">1 · send this host code to your opponent</div>
+          <textarea id="hostCode" readonly placeholder="generating…"></textarea>
+          <div class="row" style="margin-top: 8px">
+            <button id="copyHost">Copy host code</button>
+          </div>
+          <div class="step">2 · paste the join code they send back</div>
+          <textarea id="hostAnswer" placeholder="RTS1:…"></textarea>
+          <div class="row" style="margin-top: 8px">
+            <button class="primary" id="hostStart">Connect</button>
+            <button id="hostBack">Back</button>
+          </div>
+        </div>
+
+        <div id="joinPane" class="hidden">
+          <div class="step">1 · paste the host code you were given</div>
+          <textarea id="joinOffer" placeholder="RTS1:…"></textarea>
+          <div class="row" style="margin-top: 8px">
+            <button class="primary" id="joinGo">Generate join code</button>
+          </div>
+          <div class="step">2 · send this back to the host, then wait</div>
+          <textarea id="joinCode" readonly></textarea>
+          <div class="row" style="margin-top: 8px">
+            <button id="copyJoin">Copy join code</button>
+            <button id="joinBack">Back</button>
+          </div>
+        </div>
+
+        <div class="status" id="status"></div>
+      </div>
+    </div>
+
+    <div id="over" class="hidden">
+      <div class="card" style="text-align: center">
+        <h2 id="overTitle">VICTORY</h2>
+        <div class="sub" id="overText"></div>
+        <button class="primary" onclick="location.reload()">New match</button>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
