@@ -197,6 +197,17 @@ Two raw resources, one refined one.
 You start with a Datacenter, a Drive, a Gallery and four Engineers. Losing a
 depot means that resource stops arriving until you rebuild one.
 
+Two more structures spend what all that produces:
+
+- **🏠 A House** is the cheap way to raise supply — 70💾 for +10, against a
+  Datacenter's 300💾 80🎨. It makes nothing at all, and like every structure it
+  blocks movement, so a row of them walls a gap as well as it houses an army.
+- **🏥 A Hospital** heals every friendly unit standing in its ring, and burns one
+  🤖 per pulse however many that turns out to be — so bunching the wounded up is
+  the efficient thing to do. Like the Feed it cannot conjure slop: an Engineer
+  has to carry it over from a Cloud, and a Hospital with an empty shelf shows
+  its ring in red and does nothing.
+
 ### The army
 
 Two fighting units come out of a **⌨️ Keyboard**, and both are levelled at a

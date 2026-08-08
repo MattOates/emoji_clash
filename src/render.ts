@@ -1,5 +1,5 @@
 import {
-  FP, MAP_TILES, TILE, STATS as S, levelEmoji, maxLevel, BLAST_RADIUS, RES_EMOJI,
+  FP, MAP_TILES, TILE, STATS as S, levelEmoji, maxLevel, BLAST_RADIUS, HEAL_RADIUS, RES_EMOJI,
   type Entity, type Kind,
 } from "./game/types";
 import type { World } from "./game/sim";
@@ -308,14 +308,25 @@ export class Renderer {
       ctx.fillStyle = "rgba(255,255,255,0.85)";
       for (let i = 0; i < e.queue.length; i++) ctx.fillRect(x - r + i * 6, y + r + 3, 4, 3);
     }
+    // The ring a Hospital actually reaches, so you can see where to stand.
+    if (e.kind === "hospital" && e.complete) {
+      ctx.strokeStyle = e.stockSlop > 0 ? "rgba(120,240,170,0.34)" : "rgba(255,120,110,0.25)";
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([4, 5]);
+      ctx.beginPath();
+      ctx.arc(x, y, HEAL_RADIUS, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
     // Stock on hand, so you can see a Cloud backing up or a Feed running dry.
-    if (e.complete && (e.kind === "cloud" || e.kind === "feed")) {
+    if (e.complete && (e.kind === "cloud" || e.kind === "feed" || e.kind === "hospital")) {
       const label = e.kind === "cloud"
         ? (e.stockSlop ? `${e.stockBits}·${e.stockPixels} → ${e.stockSlop}🤖` : `${e.stockBits}·${e.stockPixels}`)
         : `${e.stockSlop}🤖`;
       ctx.font = "9px ui-monospace, monospace";
       ctx.textAlign = "center";
-      ctx.fillStyle = e.kind === "feed" && e.stockSlop === 0 ? "rgba(255,140,120,0.9)" : "rgba(255,255,255,0.8)";
+      ctx.fillStyle = e.kind !== "cloud" && e.stockSlop === 0 ? "rgba(255,140,120,0.9)" : "rgba(255,255,255,0.8)";
       ctx.fillText(label, x, y + r + 12);
     }
     ctx.restore();

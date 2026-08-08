@@ -2,6 +2,7 @@ import {
   FP, TILE, MAP_TILES, MAP_SIZE, STATS, IDLE, BLAST_RADIUS, BLAST_DAMAGE,
   affordable, pay, MUCK_SLOW, DUNG_COOLDOWN, CLEAN_TICKS, RECYCLE_PCT,
   maxLevel, canLevel, unitHp, unitDamage, unitRange, unitCooldown, unitSpeed, unitProjectile,
+  HEAL_RADIUS, HEAL_AMOUNT, HEAL_EVERY, HEAL_SLOP,
   type Command, type Entity, type Kind, type Player, type Res,
 } from "./types";
 import { PathCache } from "./flow";
@@ -347,7 +348,7 @@ function contextOrder(e: Entity, t: Entity, owner: number) {
   }
   if (t.owner === owner) {
     if (e.kind === "engineer" && !t.complete) return { kind: "build" as const, ...at, build: t.kind };
-    if (e.kind === "engineer" && (t.kind === "cloud" || t.kind === "feed") && t.complete) {
+    if (e.kind === "engineer" && (t.kind === "cloud" || t.kind === "feed" || t.kind === "hospital") && t.complete) {
       return { kind: "haul" as const, ...at };
     }
     if (e.kind === "engineer" && e.cargo > 0 && STATS[t.kind].depot === e.cargoRes) {
@@ -450,6 +451,26 @@ function stepBuilding(w: World, b: Entity) {
       b.stockPixels -= 1;
       b.stockSlop += 1; // sits in the Cloud until somebody carries it out
       w.events.push({ x: b.x, y: b.y - 30 * FP, kind: "float", text: "🤖" });
+    }
+  }
+
+  // A Hospital patches up whoever is standing in its ring, and pays for the
+  // whole pulse with one slop however many that turns out to be — so huddling
+  // the wounded together is the efficient thing to do.
+  if (b.kind === "hospital" && b.stockSlop >= HEAL_SLOP && ++b.progress >= HEAL_EVERY) {
+    b.progress = 0;
+    const r = HEAL_RADIUS * FP;
+    let treated = 0;
+    for (const u of w.entities) {
+      if (u.owner !== b.owner || STATS[u.kind].building || u.hp <= 0 || u.hp >= u.maxHp) continue;
+      const dx = u.x - b.x, dy = u.y - b.y;
+      if (dx * dx + dy * dy > r * r) continue;
+      u.hp = Math.min(u.maxHp, u.hp + HEAL_AMOUNT);
+      treated++;
+    }
+    if (treated > 0) {
+      b.stockSlop -= HEAL_SLOP;
+      w.events.push({ x: b.x, y: b.y - 26 * FP, kind: "float", text: "💚" });
     }
   }
 
@@ -595,7 +616,8 @@ function stepUnit(w: World, e: Entity) {
       // is the only way a Smiley ever gets to level up.
       const dest = w.byId.get(o.target);
       if (!dest || dest.owner !== e.owner || !dest.complete) { e.order = { ...IDLE }; return; }
-      if (dest.kind !== "cloud" && dest.kind !== "feed") { e.order = { ...IDLE }; return; }
+      const stocking = dest.kind === "feed" || dest.kind === "hospital";
+      if (dest.kind !== "cloud" && !stocking) { e.order = { ...IDLE }; return; }
       const pl = w.players[e.owner]!;
 
       if (e.cargo > 0) {
@@ -611,7 +633,7 @@ function stepUnit(w: World, e: Entity) {
           return;
         }
         if (e.cargoRes === "slop") {
-          if (drop.kind === "feed") drop.stockSlop += e.cargo;
+          if (drop.kind === "feed" || drop.kind === "hospital") drop.stockSlop += e.cargo;
           else pl.slop += e.cargo;
         } else if (e.cargoRes === "bits") drop.stockBits += e.cargo;
         else drop.stockPixels += e.cargo;
@@ -622,8 +644,8 @@ function stepUnit(w: World, e: Entity) {
         return;
       }
 
-      if (dest.kind === "feed") {
-        // Empty, on Feed duty: find a Cloud with slop to spare.
+      if (stocking) {
+        // Empty, on delivery duty: find a Cloud with slop to spare.
         const src = nearest(w, e, (b) => b.owner === e.owner && b.kind === "cloud" && b.complete && b.stockSlop > 0);
         if (!src) { moveToward(w, e, dest.x, dest.y, spd, 70 * FP); return; } // loiter by the Feed
         if (!inRange(e, src, 8 * FP)) {

@@ -400,7 +400,7 @@ window.addEventListener("keydown", (ev) => {
     toast(renderer.showTrails ? "Pheromone trails shown." : "Pheromone trails hidden.");
     return;
   }
-  if (ev.key === "F1") { ev.preventDefault(); toast("LMB drag · RMB order · A attack-move · D drive · Y gallery · K keyboard · C cloud · X feed · B datacenter · E/J/F/M train · R recycle · P foul ground · T trails · Ctrl+A all · Ctrl+1-9 group · Space home"); return; }
+  if (ev.key === "F1") { ev.preventDefault(); toast("LMB drag · RMB order · A attack-move · H house · D drive · Y gallery · K keyboard · C cloud · X feed · L hospital · B datacenter · E/J/F/M train · R recycle · P foul ground · T trails · Ctrl+A all · Ctrl+1-9 group · Space home"); return; }
   if (k === " ") {
     const home = runner.world.entities.find((e) => e.owner === runner!.me && e.kind === "datacenter");
     if (home) centerOn(home.x / FP, home.y / FP);
@@ -577,7 +577,9 @@ function syncCardMeta() {
     if (e.kind === "bitnode" || e.kind === "pixnode") parts.push(`${e.amount} left`);
     if (e.cargo) parts.push(`carrying ${e.cargo}${RES_EMOJI[e.cargoRes ?? "bits"]}`);
     if (e.kind === "cloud" && e.complete) parts.push(`intake ${e.stockBits}💾 ${e.stockPixels}🎨 · ${e.stockSlop}🤖 awaiting pickup`);
-    if (e.kind === "feed" && e.complete) parts.push(`${e.stockSlop}🤖 in stock`);
+    if ((e.kind === "feed" || e.kind === "hospital") && e.complete) {
+      parts.push(e.stockSlop > 0 ? `${e.stockSlop}🤖 in stock` : "no 🤖 — send an Engineer");
+    }
     if (canLevel(e.kind)) {
       const top = maxLevel(e.kind);
       if (e.kind === "face") {

@@ -16,7 +16,7 @@ export type Kind =
   // units
   | "engineer" | "janitor" | "face" | "monkey"
   // structures
-  | "datacenter" | "drive" | "gallery" | "cloud" | "keyboard" | "feed"
+  | "datacenter" | "house" | "drive" | "gallery" | "cloud" | "keyboard" | "feed" | "hospital"
   // neutral deposits
   | "bitnode" | "pixnode"
   // hazards
@@ -91,6 +91,10 @@ export function unitProjectile(kind: Kind, level: number): string {
 }
 
 /** A fouled tile is this percentage of normal speed to cross. */
+export const HEAL_RADIUS = 112; // world pixels
+export const HEAL_AMOUNT = 14; // health restored per pulse, per unit in the ring
+export const HEAL_EVERY = 25; // ticks between pulses
+export const HEAL_SLOP = 1; // slop burned per pulse, however many it patches up
 export const RECYCLE_PCT = 60; // fraction of cost handed back when recycling
 export const MUCK_SLOW = 42;
 export const MUCK_COST = 22; // extra Dijkstra cost, so routes prefer to go around
@@ -157,6 +161,11 @@ export const STATS: Record<Kind, Stats> = {
     sight: px(300), supply: 15, label: "Datacenter", hotkey: "B", emoji: "🏢",
     blurb: "makes Engineers · +15 supply",
   },
+  house: {
+    ...base, solid: true, hp: 380, radius: px(17), building: true, cost: cost(70),
+    buildTime: sec(10), sight: px(190), supply: 10, label: "House", hotkey: "H", emoji: "🏠",
+    blurb: "+10 supply, makes nothing — and blocks the way",
+  },
   drive: {
     ...base, solid: true, hp: 520, radius: px(22), building: true, cost: cost(90), buildTime: sec(14),
     sight: px(220), depot: "bits", label: "Drive", hotkey: "D", emoji: "🗄️",
@@ -187,6 +196,11 @@ export const STATS: Record<Kind, Stats> = {
     ...base, hp: 60, radius: px(14), building: true, sight: 0,
     label: "Fouling", emoji: "💩", blurb: "slows anything crossing it — needs a 🧹 Janitor",
   },
+  hospital: {
+    ...base, solid: true, hp: 560, radius: px(24), building: true, cost: cost(160, 40),
+    buildTime: sec(18), sight: px(230), label: "Hospital", hotkey: "L", emoji: "🏥",
+    blurb: "heals everyone standing round it — burns 🤖 to do it",
+  },
   bitnode: {
     ...base, hp: 1, radius: px(15), building: true, sight: 0,
     label: "Bit Cache", emoji: "💾", blurb: "plentiful, quick to mine",
@@ -198,7 +212,7 @@ export const STATS: Record<Kind, Stats> = {
 };
 
 export const UNITS: Kind[] = ["engineer", "janitor", "face", "monkey"];
-export const BUILDABLE: Kind[] = ["drive", "gallery", "keyboard", "cloud", "feed", "datacenter"];
+export const BUILDABLE: Kind[] = ["house", "drive", "gallery", "keyboard", "cloud", "feed", "hospital", "datacenter"];
 
 export type OrderKind =
   | "idle" | "move" | "attackMove" | "attack"
