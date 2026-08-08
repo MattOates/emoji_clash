@@ -11,6 +11,7 @@ static HTML file.
 ```
 make install
 make dev         # http://localhost:5173
+make test        # run the test suite
 make build       # -> dist/index.html, a single self-contained file
 make pages       # preview the Pages site locally
 make deploy      # scp it to a server of your own
@@ -252,6 +253,33 @@ src/net.ts          WebRTC peer setup and the compressed offer/answer codes
 src/render.ts       emoji glyph cache, rings, fog of war, minimap
 src/main.ts         menu, input, HUD, frame loop
 ```
+
+## Tests
+
+```
+npm test
+```
+
+28 tests over the simulation, which is pure integer TypeScript with no DOM, so
+it runs under plain Node with no browser involved. They cover the things worth
+being sure of rather than chasing coverage:
+
+- **Determinism.** Two worlds on the same seed, driven by the AI for 8000 ticks,
+  must produce an identical checksum — the invariant the whole peer-to-peer
+  design rests on. Plus a negative control so a weak checksum cannot pass, and
+  an assertion that no entity coordinate ever becomes fractional.
+- **The economy end to end.** Mining into the right depot, bits outpacing
+  pixels, the Cloud fusing 2:1 and *not* crediting the treasury by itself,
+  couriers hauling slop out, the Feed stalling on an empty shelf.
+- **Regressions for bugs that actually happened.** The Feed charging once per
+  level rather than once per tick, and a burst of orders spreading across every
+  Keyboard instead of piling onto one.
+- **Combat and movement.** Range bands, the detonation hurting enemies only,
+  foulings slowing whoever crosses and Janitors clearing them, walking around a
+  wall, and giving up on somewhere unreachable instead of shoving forever.
+
+CI runs them on every push and pull request, and `npm run build` will not
+produce a bundle if they fail.
 
 `window.rts` exposes the live runner in the console for poking at a running match.
 

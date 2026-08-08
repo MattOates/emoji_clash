@@ -36,6 +36,10 @@ dev: node_modules ## Run the dev server
 check: node_modules ## Typecheck only
 	npm run check
 
+.PHONY: test
+test: node_modules ## Run the test suite
+	npm test
+
 .PHONY: build
 build: node_modules ## Build dist/index.html
 	npm run build

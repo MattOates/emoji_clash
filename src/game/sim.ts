@@ -138,7 +138,9 @@ function clamp(v: number, lo: number, hi: number) {
   return v < lo ? lo : v > hi ? hi : v;
 }
 
-function recomputeSupply(w: World) {
+/** Exported for tests that stand buildings up directly rather than
+ *  waiting out a construction. */
+export function recomputeSupply(w: World) {
   const used = [0, 0], cap = [0, 0];
   for (const e of w.entities) {
     if (e.owner < 0) continue;
