@@ -294,7 +294,17 @@ export class Renderer {
       drawGlyph(ctx, "🧹", 0, 0, 13);
       ctx.restore();
     }
+    // Each production building shows its own queue and its own progress, so a
+    // second Keyboard visibly shares the load rather than looking decorative.
     if (e.owner === me && e.queue.length) {
+      const total = S[e.queue[0]!].buildTime;
+      const done = (total - e.queueLeft) / total;
+      ctx.strokeStyle = "rgba(120,220,255,0.9)";
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.arc(x, y, r + 4, -Math.PI / 2, -Math.PI / 2 + done * Math.PI * 2);
+      ctx.stroke();
+      drawGlyph(ctx, emojiFor({ ...e, kind: e.queue[0]!, level: 0 } as Entity), x - r - 5, y - r - 3, 12);
       ctx.fillStyle = "rgba(255,255,255,0.85)";
       for (let i = 0; i < e.queue.length; i++) ctx.fillRect(x - r + i * 6, y + r + 3, 4, 3);
     }

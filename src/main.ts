@@ -468,8 +468,15 @@ window.addEventListener("keydown", (ev) => {
 });
 window.addEventListener("keyup", (ev) => keys.delete(ev.key.toLowerCase()));
 
-function tryTrain(buildings: Entity[], kind: Kind) {
+function tryTrain(_selected: Entity[], kind: Kind) {
   const pl = runner!.world.players[runner!.me]!;
+  // Every building you own that can make this, not just the ones selected.
+  // Restricting it to the selection meant clicking with one Keyboard highlighted
+  // queued everything there while a second Keyboard sat idle, so owning two did
+  // nothing for your production rate.
+  const buildings = runner!.world.entities.filter(
+    (b) => b.owner === runner!.me && b.complete && canTrain(b.kind, kind));
+  if (!buildings.length) return;
   if (!affordable(pl, STATS[kind].cost)) { toast(`Need ${costText(STATS[kind].cost)}.`); return; }
   if (pl.supply >= pl.supplyCap) { toast("Supply capped — build a 🏢 Datacenter or ⌨️ Keyboard."); return; }
   // Every candidate goes over; the simulation picks the shortest queue when the
@@ -486,8 +493,9 @@ function syncCard() {
   if (!sel.length) { card.classList.add("hidden"); cardKey = ""; return; }
   card.classList.remove("hidden");
 
-  const kinds = new Set(sel.map((e) => e.kind));
-  const key = sel.length + "|" + [...kinds].sort().join(",");
+  // Keyed on the actual ids: two selections of the same size and kinds are not
+  // interchangeable, and the buttons close over these entities.
+  const key = sel.map((e) => e.id).sort((a, b) => a - b).join(",");
   $("cardTitle").textContent = sel.length === 1
     ? `${emojiFor(sel[0]!)} ${STATS[sel[0]!.kind].label}`
     : `${sel.length} selected`;
