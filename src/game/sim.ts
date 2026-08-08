@@ -1,6 +1,7 @@
 import {
-  FP, TILE, MAP_TILES, MAP_SIZE, STATS, IDLE, MAX_LEVEL, BLAST_RADIUS, BLAST_DAMAGE,
-  affordable, pay, faceHp, faceDamage, MUCK_SLOW, DUNG_COOLDOWN, CLEAN_TICKS, RECYCLE_PCT,
+  FP, TILE, MAP_TILES, MAP_SIZE, STATS, IDLE, BLAST_RADIUS, BLAST_DAMAGE,
+  affordable, pay, MUCK_SLOW, DUNG_COOLDOWN, CLEAN_TICKS, RECYCLE_PCT,
+  maxLevel, canLevel, unitHp, unitDamage, unitRange, unitCooldown, unitSpeed, unitProjectile,
   type Command, type Entity, type Kind, type Player, type Res,
 } from "./types";
 import { PathCache } from "./flow";
@@ -61,8 +62,8 @@ function makeEntity(w: World, kind: Kind, owner: number, x: number, y: number, c
   const s = STATS[kind];
   const e: Entity = {
     id: w.nextId++, kind, owner, x, y,
-    hp: complete ? s.hp : Math.max(1, (s.hp / 10) | 0),
-    maxHp: s.hp,
+    hp: complete ? unitHp(kind, 0) : Math.max(1, (s.hp / 10) | 0),
+    maxHp: unitHp(kind, 0),
     order: { ...IDLE }, cooldown: 0, cargo: 0, cargoRes: null, amount: 0, progress: 0,
     complete, queue: [], queueLeft: 0,
     rallyX: x, rallyY: y + 62 * FP,
@@ -178,22 +179,19 @@ function fouled(w: World, x: number, y: number): boolean {
 /** Everything slows to a crawl crossing a fouling — including whoever put it
  *  there. That is what makes it a real cost rather than free area denial. */
 function speedOf(w: World, e: Entity): number {
-  const base = STATS[e.kind].speed;
+  const base = unitSpeed(e.kind, e.level);
   return fouled(w, e.x, e.y) ? Math.max(1, Math.trunc((base * MUCK_SLOW) / 100)) : base;
 }
 
 export function canTrain(building: Kind, unit: Kind): boolean {
   if (building === "datacenter") return unit === "engineer" || unit === "janitor";
-  if (building === "keyboard") {
-    return unit === "face" || unit === "ninja" || unit === "guard"
-      || unit === "monkey" || unit === "wizard" || unit === "vampire";
-  }
+  if (building === "keyboard") return unit === "face" || unit === "monkey";
   return false;
 }
 
 export function trainableAt(building: Kind): Kind[] {
   if (building === "datacenter") return ["engineer", "janitor"];
-  if (building === "keyboard") return ["face", "ninja", "guard", "monkey", "wizard", "vampire"];
+  if (building === "keyboard") return ["face", "monkey"];
   return [];
 }
 
@@ -324,7 +322,7 @@ export function applyCommand(w: World, owner: number, cmd: Command) {
     case "detonate": {
       for (const id of cmd.ids) {
         const e = mine(id);
-        if (e && e.kind === "face" && e.level >= MAX_LEVEL) e.hp = 0;
+        if (e && e.kind === "face" && e.level >= maxLevel("face")) e.hp = 0;
       }
       break;
     }
@@ -355,7 +353,7 @@ function contextOrder(e: Entity, t: Entity, owner: number) {
     if (e.kind === "engineer" && e.cargo > 0 && STATS[t.kind].depot === e.cargoRes) {
       return { kind: "returnCargo" as const, ...at };
     }
-    if (e.kind === "face" && t.kind === "feed" && t.complete) return { kind: "enroll" as const, ...at };
+    if (canLevel(e.kind) && t.kind === "feed" && t.complete) return { kind: "enroll" as const, ...at };
     return { kind: "move" as const, x: t.x, y: t.y, target: 0, build: null };
   }
   if (t.kind === "dung") {
@@ -407,7 +405,7 @@ export function step(w: World, cmds: { owner: number; cmd: Command }[]) {
   for (let i = w.entities.length - 1; i >= 0; i--) {
     const e = w.entities[i]!;
     if (e.hp > 0 && !(nodeRes(e.kind) && e.amount <= 0)) continue;
-    if (e.kind === "face" && e.level >= MAX_LEVEL) detonate(w, e);
+    if (e.kind === "face" && e.level >= maxLevel("face")) detonate(w, e);
     w.events.push({ x: e.x, y: e.y, kind: nodeRes(e.kind) ? "depleted" : "death" });
     w.entities.splice(i, 1);
     w.byId.delete(e.id);
@@ -468,7 +466,6 @@ function stepBuilding(w: World, b: Entity) {
 }
 
 function stepUnit(w: World, e: Entity) {
-  const s = STATS[e.kind];
   const o = e.order;
   const spd = speedOf(w, e);
   if (e.kind === "monkey" && e.progress > 0) e.progress--; // dung cooldown
@@ -492,7 +489,7 @@ function stepUnit(w: World, e: Entity) {
       }
       const foe = acquire(w, e);
       if (foe) {
-        if (o.kind === "idle" && inRange(e, foe, s.range)) { strike(w, e, foe); return; }
+        if (o.kind === "idle" && inRange(e, foe, rangeOf(e))) { strike(w, e, foe); return; }
         e.order = { kind: "attack", x: foe.x, y: foe.y, target: foe.id, build: null };
         return;
       }
@@ -508,7 +505,7 @@ function stepUnit(w: World, e: Entity) {
     case "attack": {
       const t = w.byId.get(o.target);
       if (!t || t.hp <= 0 || t.owner === e.owner || t.owner < 0) { e.order = { ...IDLE }; return; }
-      if (inRange(e, t, s.range)) strike(w, e, t);
+      if (inRange(e, t, rangeOf(e))) strike(w, e, t);
       else moveToward(w, e, t.x, t.y, spd, 0, t.id);
       return;
     }
@@ -695,10 +692,10 @@ function stepUnit(w: World, e: Entity) {
     }
     case "enroll": {
       const feed = w.byId.get(o.target);
-      if (!feed || feed.kind !== "feed" || feed.owner !== e.owner || !feed.complete || e.kind !== "face") {
+      if (!feed || feed.kind !== "feed" || feed.owner !== e.owner || !feed.complete || !canLevel(e.kind)) {
         e.order = { ...IDLE }; return;
       }
-      if (e.level >= MAX_LEVEL) { e.order = { ...IDLE }; return; }
+      if (!canLevel(e.kind) || e.level >= maxLevel(e.kind)) { e.order = { ...IDLE }; return; }
       if (!inRange(e, feed, 10 * FP)) { moveToward(w, e, feed.x, feed.y, spd, 0, feed.id); e.progress = 0; return; }
       // The slop has to be here, in this building, carried in by somebody.
       if (e.progress === 0 && feed.stockSlop < ENROLL_SLOP) return; // queue and wait
@@ -706,10 +703,12 @@ function stepUnit(w: World, e: Entity) {
       if (++e.progress < ENROLL_TICKS) return;
       e.progress = 0;
       e.level++;
-      e.maxHp = faceHp(e.level);
+      // A Smiley loses body as it gains bite, so health is re-derived rather
+      // than topped up — going up a level can leave it with less than before.
+      e.maxHp = unitHp(e.kind, e.level);
       e.hp = e.maxHp;
       w.events.push({ x: e.x, y: e.y - 24 * FP, kind: "levelup", text: "😤" });
-      e.order = e.level >= MAX_LEVEL
+      e.order = e.level >= maxLevel(e.kind)
         ? { ...IDLE }
         : { kind: "move", x: feed.rallyX, y: feed.rallyY, target: 0, build: null };
       return;
@@ -722,29 +721,31 @@ function acceptsFrom(depot: Entity | undefined, e: Entity): depot is Entity {
     && STATS[depot.kind].depot === e.cargoRes;
 }
 
+/** Reach and punch both move with the mood, so they are read per entity. */
+function rangeOf(e: Entity): number { return unitRange(e.kind, e.level); }
+
 function inRange(a: Entity, b: Entity, range: number): boolean {
   const reach = range + STATS[a.kind].radius + STATS[b.kind].radius;
   const dx = a.x - b.x, dy = a.y - b.y;
   return dx * dx + dy * dy <= reach * reach;
 }
 
-function damageOf(e: Entity): number {
-  return e.kind === "face" ? faceDamage(e.level) : STATS[e.kind].damage;
-}
+function damageOf(e: Entity): number { return unitDamage(e.kind, e.level); }
 
 function strike(w: World, a: Entity, b: Entity) {
   if (a.cooldown > 0) return;
   const s = STATS[a.kind];
-  a.cooldown = s.cooldown;
+  a.cooldown = unitCooldown(a.kind, a.level);
   const dmg = damageOf(a);
   b.hp -= dmg;
   b.flash = 6;
   if (s.lifesteal > 0) a.hp = Math.min(a.maxHp, a.hp + Math.trunc((dmg * s.lifesteal) / 100));
-  if (s.projectile) {
+  const thrown = unitProjectile(a.kind, a.level);
+  if (thrown) {
     // Damage already landed; the arc is pure theatre, so it cannot desync.
-    w.events.push({ x: a.x, y: a.y, x2: b.x, y2: b.y, kind: "lob", text: s.projectile });
+    w.events.push({ x: a.x, y: a.y, x2: b.x, y2: b.y, kind: "lob", text: thrown });
   } else {
-    w.events.push({ x: b.x, y: b.y, kind: s.range > 60 * FP ? "shot" : "hit" });
+    w.events.push({ x: b.x, y: b.y, kind: "hit" });
   }
   // Being shot at pulls idle defenders into the fight.
   if (b.order.kind === "idle" && !STATS[b.kind].building && b.owner >= 0) {

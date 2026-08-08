@@ -1,4 +1,4 @@
-import { FP, STATS, affordable, MAX_LEVEL, type Command, type Entity, type Kind } from "./types";
+import { FP, STATS, affordable, maxLevel, canLevel, type Command, type Entity, type Kind } from "./types";
 import { siteClear, type World } from "./sim";
 
 // Eight unit directions at 1000x scale — integer table instead of trig, so the
@@ -79,11 +79,9 @@ export function aiCommands(w: World, me: number): Command[] {
   }
   if (!saving) for (const b of keyboards) {
     if (!b.complete) continue;
-    const roll = ((w.tick / 10) | 0) % 6;
-    const kind: Kind = roll === 0 ? "guard" : roll === 1 ? "ninja"
-      : roll === 2 && affordable(pl, STATS.monkey.cost) ? "monkey"
-      : roll === 3 && affordable(pl, STATS.wizard.cost) ? "wizard"
-      : roll === 4 && affordable(pl, STATS.vampire.cost) ? "vampire" : "face";
+    // Mostly Smileys to hold the line, a Monkey every third for harassment.
+    const roll = ((w.tick / 10) | 0) % 3;
+    const kind: Kind = roll === 2 && affordable(pl, STATS.monkey.cost) ? "monkey" : "face";
     out.push({ c: "train", ids: [b.id], kind });
   }
 
@@ -91,7 +89,7 @@ export function aiCommands(w: World, me: number): Command[] {
   const enrolling = new Set<number>();
   const fouling = new Set<number>();
   if (feeds.length && feeds[0]!.stockSlop >= 1) {
-    const calm = mine.filter((e) => e.kind === "face" && e.level < MAX_LEVEL && e.order.kind === "idle");
+    const calm = mine.filter((e) => canLevel(e.kind) && e.level < maxLevel(e.kind) && e.order.kind === "idle");
     if (calm.length) {
       out.push({ c: "target", ids: [calm[0]!.id], id: feeds[0]!.id });
       enrolling.add(calm[0]!.id); // or the hold order below would overwrite it
@@ -134,7 +132,7 @@ export function aiCommands(w: World, me: number): Command[] {
 
   // Attack once there is a critical mass; otherwise hold near home.
   const idleArmy = army.filter((a) => a.order.kind === "idle" && !enrolling.has(a.id) && !fouling.has(a.id)
-    && !(a.kind === "face" && a.level > 0 && a.level < MAX_LEVEL));
+    && !(canLevel(a.kind) && a.level > 0 && a.level < maxLevel(a.kind)));
   if (army.length >= 7 && idleArmy.length) {
     const hit = foes.find((f) => f.kind === "datacenter") ?? foes.find((f) => STATS[f.kind].building) ?? foes[0];
     if (hit) out.push({ c: "attackMove", ids: idleArmy.map((a) => a.id), x: hit.x, y: hit.y });

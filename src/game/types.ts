@@ -14,7 +14,7 @@ export const TPS = 1000 / TICK_MS;
 
 export type Kind =
   // units
-  | "engineer" | "janitor" | "face" | "ninja" | "guard" | "wizard" | "vampire" | "monkey"
+  | "engineer" | "janitor" | "face" | "monkey"
   // structures
   | "datacenter" | "drive" | "gallery" | "cloud" | "keyboard" | "feed"
   // neutral deposits
@@ -28,11 +28,67 @@ export interface Cost { bits: number; pixels: number; slop: number }
 export const cost = (bits: number, pixels = 0, slop = 0): Cost => ({ bits, pixels, slop });
 export const RES_EMOJI: Record<Res, string> = { bits: "💾", pixels: "🎨", slop: "🤖" };
 
-/** Faces sour as they level up at the Social Feed. The last one detonates. */
-export const FACE_FACES = ["🙂", "😐", "🙁", "😠", "😡"];
-export const MAX_LEVEL = 4;
-export const BLAST_RADIUS = 78; // world pixels
-export const BLAST_DAMAGE = 70;
+// Everything that fights is levelled at the Social Feed, and the two lines want
+// opposite things from it.
+//
+// A Smiley trades its body for its temper: it starts as a cheerful sack of
+// hitpoints that can barely hurt anyone, and each step down the mood makes it
+// frailer and nastier, until 😡 is trivially killed and lethal to stand near.
+// From 🙁 it stops closing to melee and starts throwing, so a levelled army
+// naturally sorts itself — happy faces soak at the front, sour ones shoot over
+// their shoulders.
+//
+// A Monkey levels the ordinary way instead: tougher and faster each time, so it
+// stays the harassment unit and simply gets better at not dying.
+export const PROGRESSION: Partial<Record<Kind, string[]>> = {
+  face: ["🙂", "😐", "🙁", "😠", "😡"],
+  monkey: ["🙈", "🙉", "🙊", "🐵"],
+};
+
+const FACE_HP = [220, 165, 115, 78, 48];
+const FACE_DAMAGE = [4, 10, 17, 25, 34];
+const FACE_RANGE = [14, 14, 104, 118, 132]; // world px; melee until 🙁
+const FACE_COOLDOWN = [16, 15, 20, 19, 18];
+const MONKEY_HP = [65, 92, 120, 152];
+const MONKEY_SPEED = [1.6, 1.8, 2.05, 2.3];
+
+export const BLAST_RADIUS = 96; // world pixels
+export const BLAST_DAMAGE = 135;
+
+export function maxLevel(kind: Kind): number {
+  const p = PROGRESSION[kind];
+  return p ? p.length - 1 : 0;
+}
+export function canLevel(kind: Kind): boolean { return maxLevel(kind) > 0; }
+export function levelEmoji(kind: Kind, level: number): string {
+  const p = PROGRESSION[kind];
+  return p ? p[Math.min(level, p.length - 1)]! : STATS[kind].emoji;
+}
+const at = (table: number[], level: number) => table[Math.min(level, table.length - 1)]!;
+
+export function unitHp(kind: Kind, level: number): number {
+  if (kind === "face") return at(FACE_HP, level);
+  if (kind === "monkey") return at(MONKEY_HP, level);
+  return STATS[kind].hp;
+}
+export function unitDamage(kind: Kind, level: number): number {
+  return kind === "face" ? at(FACE_DAMAGE, level) : STATS[kind].damage;
+}
+export function unitRange(kind: Kind, level: number): number {
+  return kind === "face" ? Math.round(at(FACE_RANGE, level) * FP) : STATS[kind].range;
+}
+export function unitCooldown(kind: Kind, level: number): number {
+  return kind === "face" ? at(FACE_COOLDOWN, level) : STATS[kind].cooldown;
+}
+export function unitSpeed(kind: Kind, level: number): number {
+  return kind === "monkey" ? Math.round(at(MONKEY_SPEED, level) * FP) : STATS[kind].speed;
+}
+/** Only a thrown attack draws a projectile; a Smiley punches until 🙁. */
+export function unitProjectile(kind: Kind, level: number): string {
+  if (kind === "monkey") return "💩";
+  if (kind === "face" && level >= 2) return "💢";
+  return "";
+}
 
 /** A fouled tile is this percentage of normal speed to cross. */
 export const RECYCLE_PCT = 60; // fraction of cost handed back when recycling
@@ -84,34 +140,16 @@ export const STATS: Record<Kind, Stats> = {
     label: "Janitor", hotkey: "J", emoji: "👨🏻‍🔧", blurb: "scrubs 💩 off the map",
   },
   face: {
-    ...base, hp: 100, radius: px(9), speed: px(1.3), damage: 8, range: px(14), cooldown: 14,
+    ...base, hp: 220, radius: px(9), speed: px(1.28), damage: 4, range: px(14), cooldown: 16,
     cost: cost(60), buildTime: sec(10),
-    label: "Smiley", hotkey: "F", emoji: "🙂", blurb: "melee · levels up at the Feed",
-  },
-  ninja: {
-    ...base, hp: 70, radius: px(9), speed: px(2), damage: 11, range: px(14), cooldown: 8,
-    cost: cost(70, 30), buildTime: sec(12), sight: px(215),
-    label: "Ninja", hotkey: "N", emoji: "🥷", blurb: "fast, deadly, made of paper",
-  },
-  guard: {
-    ...base, hp: 190, radius: px(10), speed: px(1), damage: 10, range: px(16), cooldown: 16,
-    cost: cost(90, 20), buildTime: sec(14),
-    label: "Guard", hotkey: "G", emoji: "💂", blurb: "slow wall of hitpoints",
-  },
-  wizard: {
-    ...base, hp: 60, radius: px(9), speed: px(1.1), damage: 17, range: px(150), cooldown: 26,
-    cost: cost(90, 60, 2), buildTime: sec(15), sight: px(260), projectile: "✨",
-    label: "Wizard", hotkey: "W", emoji: "🧙", blurb: "outranges everything",
+    label: "Smiley", hotkey: "F", emoji: "🙂",
+    blurb: "cheerful meat shield — sours into a glass cannon at the Feed",
   },
   monkey: {
-    ...base, hp: 65, radius: px(9), speed: px(1.6), damage: 7, range: px(92), cooldown: 16,
+    ...base, hp: 65, radius: px(9), speed: px(1.6), damage: 8, range: px(96), cooldown: 15,
     cost: cost(70, 25), buildTime: sec(11), sight: px(225), projectile: "💩",
-    label: "Monkey", hotkey: "M", emoji: "🐒", blurb: "throws 💩 — and can leave it lying about",
-  },
-  vampire: {
-    ...base, hp: 115, radius: px(9), speed: px(1.45), damage: 12, range: px(15), cooldown: 13,
-    cost: cost(80, 50, 3), buildTime: sec(15), lifesteal: 50,
-    label: "Vampire", hotkey: "V", emoji: "🧛", blurb: "heals for half the damage it deals",
+    label: "Monkey", hotkey: "M", emoji: "🙈",
+    blurb: "throws 💩, fouls ground — the Feed makes it faster and tougher",
   },
 
   datacenter: {
@@ -159,7 +197,7 @@ export const STATS: Record<Kind, Stats> = {
   },
 };
 
-export const UNITS: Kind[] = ["engineer", "janitor", "face", "ninja", "guard", "monkey", "wizard", "vampire"];
+export const UNITS: Kind[] = ["engineer", "janitor", "face", "monkey"];
 export const BUILDABLE: Kind[] = ["drive", "gallery", "keyboard", "cloud", "feed", "datacenter"];
 
 export type OrderKind =
@@ -247,12 +285,4 @@ export function costText(c: Cost): string {
   if (c.pixels) bits.push(`${c.pixels}🎨`);
   if (c.slop) bits.push(`${c.slop}🤖`);
   return bits.join(" ") || "free";
-}
-
-/** A face's stats climb with its anger. */
-export function faceHp(level: number): number {
-  return STATS.face.hp + Math.trunc((STATS.face.hp * 40 * level) / 100);
-}
-export function faceDamage(level: number): number {
-  return STATS.face.damage + Math.trunc((STATS.face.damage * 45 * level) / 100);
 }

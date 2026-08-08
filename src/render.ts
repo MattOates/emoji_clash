@@ -1,5 +1,5 @@
 import {
-  FP, MAP_TILES, TILE, STATS as S, FACE_FACES, MAX_LEVEL, BLAST_RADIUS, RES_EMOJI,
+  FP, MAP_TILES, TILE, STATS as S, levelEmoji, maxLevel, BLAST_RADIUS, RES_EMOJI,
   type Entity, type Kind,
 } from "./game/types";
 import type { World } from "./game/sim";
@@ -51,9 +51,7 @@ function roundSize(size: number): number {
   return Math.max(8, Math.round(size / 2) * 2);
 }
 
-export function emojiFor(e: Entity): string {
-  return e.kind === "face" ? FACE_FACES[Math.min(e.level, MAX_LEVEL)]! : S[e.kind].emoji;
-}
+export function emojiFor(e: Entity): string { return levelEmoji(e.kind, e.level); }
 
 export class Renderer {
   private terrain: HTMLCanvasElement;
@@ -258,7 +256,7 @@ export class Renderer {
     ctx.shadowBlur = 0;
 
     // A maxed-out face is about to be somebody's problem.
-    if (e.kind === "face" && e.level >= MAX_LEVEL) {
+    if (e.kind === "face" && e.level >= maxLevel("face")) {
       ctx.strokeStyle = "rgba(255,90,70,0.75)";
       ctx.lineWidth = 1.4;
       ctx.setLineDash([3, 3]);

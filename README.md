@@ -199,38 +199,32 @@ depot means that resource stops arriving until you rebuild one.
 
 ### The army
 
-**⌨️ A Keyboard** types fighters into existence: 🙂 Smiley (cheap melee),
-🥷 Ninja (fast, fragile, high damage), 💂 Guard (a slow wall), 🐒 Monkey, 🧙 Wizard
-(outranges everything, throws ✨), 🧛 Vampire (heals for half the damage it deals).
-The 🏢 Datacenter also makes 👨🏻‍🔧 Janitors.
+Two fighting units come out of a **⌨️ Keyboard**, and both are levelled at a
+**📱 Social Feed** — but the Feed does opposite things to them. Each step costs
+one 🤖 physically sitting in that building, carried there by an Engineer.
 
-**🐒 The Monkey** is a disruption unit, not a damage dealer. It lobs 💩 at enemies
-from range like any skirmisher, but its real job is `P` — **fouling ground**. It
-leaves a 💩 lying wherever you click, on a 8-second cooldown, and a fouled tile:
+**🙂 Smileys trade their body for their temper.** They start as cheerful sacks
+of hitpoints that can barely hurt anyone, and every step down the mood makes
+them frailer and nastier:
 
-- slows *anything* crossing it to 42% speed, including your own units
-- costs enough extra in the flow field that routes prefer to go around
-- blocks construction on that spot
+| | 🙂 | 😐 | 🙁 | 😠 | 😡 |
+|---|---|---|---|---|---|
+| health | 220 | 165 | 115 | 78 | 48 |
+| damage | 4 | 10 | 17 | 25 | 34 |
+| attack | melee | melee | **ranged** | ranged | ranged |
 
-Drop a few across an opponent's Drive run and their whole economy staggers.
-Nothing removes it on its own — no decay, no timer. The only counter is a
-👨🏻‍🔧 **Janitor**, who carries a 🧹 while on the job, scrubs a fouling away in about two
-seconds, and will hunt down
-any mess within range of itself without being told.
+From 🙁 they stop closing to melee and start throwing 💢, so a mixed army sorts
+itself out without being told: happy faces soak at the front while sour ones
+shoot over their shoulders. A 😡 dies to almost anything and hits like a truck,
+and detonates for 135 damage across 96 pixels when it goes — enough to take a
+clump of anything with it, deliberately or otherwise.
 
-**📱 A Social Feed** is where Smileys go to lose their temper — but it cannot
-conjure slop any more than the Cloud can. Put an Engineer on the Feed and they
-run a second convoy, carrying slop from a Cloud to the Feed's own shelf. Each
-step up costs **one 🤖 that is physically sitting in that building**, plus a few
-seconds of queueing:
+**🙈 Monkeys level the ordinary way**, getting tougher and faster so they stay
+alive to keep harassing: 🙈 → 🙉 → 🙊 → 🐵, 65 to 152 health and 1.6 to 2.3
+speed. They keep their thrown 💩 and their ability to foul ground with `P`.
 
-> 🙂 → 😐 → 🙁 → 😠 → 😡
-
-Each step adds 40% health and 45% damage. Cut the convoy and the queue stalls —
-levelling is a supply line, not a purchase. A fully radicalised 😡 detonates when
-it dies, 🤯 dealing 70 damage to every enemy within 78 pixels — and you can set
-one off deliberately with the Detonate button. Chain reactions are entirely
-possible and highly encouraged.
+**👨🏻‍🔧 Janitors** and **🧑‍🔧 Engineers** round out the roster: one scrubs 💩 away,
+the other mines, builds and hauls.
 
 Destroy everything the opponent owns to win.
 

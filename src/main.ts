@@ -1,5 +1,5 @@
 import {
-  FP, MAP_TILES, STATS, TILE, BUILDABLE, MAX_LEVEL, RES_EMOJI,
+  FP, MAP_TILES, STATS, TILE, BUILDABLE, maxLevel, canLevel, unitRange, RES_EMOJI,
   affordable, costText, type Command, type Entity, type Kind,
 } from "./game/types";
 import { canTrain, siteClear, trainableAt, ENROLL_SLOP, type World } from "./game/sim";
@@ -388,7 +388,7 @@ window.addEventListener("keydown", (ev) => {
     toast(renderer.showTrails ? "Pheromone trails shown." : "Pheromone trails hidden.");
     return;
   }
-  if (ev.key === "F1") { ev.preventDefault(); toast("LMB drag · RMB order · A attack-move · D drive · Y gallery · K keyboard · C cloud · X feed · B datacenter · E/F/N/G/W/V train · R recycle · P foul ground · T trails · Ctrl+A all · Ctrl+1-9 group · Space home"); return; }
+  if (ev.key === "F1") { ev.preventDefault(); toast("LMB drag · RMB order · A attack-move · D drive · Y gallery · K keyboard · C cloud · X feed · B datacenter · E/J/F/M train · R recycle · P foul ground · T trails · Ctrl+A all · Ctrl+1-9 group · Space home"); return; }
   if (k === " ") {
     const home = runner.world.entities.find((e) => e.owner === runner!.me && e.kind === "datacenter");
     if (home) centerOn(home.x / FP, home.y / FP);
@@ -534,12 +534,12 @@ function syncCard() {
   if (sel.some((e) => e.kind === "monkey")) {
     add("💩 Foul ground [P]", "slows any crossing", () => { dungArmed = !dungArmed; placing = null; attackMoveArmed = false; });
   }
-  if (sel.some((e) => e.kind === "face" && e.level < MAX_LEVEL)) {
+  if (sel.some((e) => canLevel(e.kind) && e.level < maxLevel(e.kind))) {
     add("📱 Send to Feed", `${ENROLL_SLOP}🤖 per level`, () => toast("Right-click a 📱 Social Feed — it must have 🤖 slop carried in first."));
   }
-  if (sel.some((e) => e.kind === "face" && e.level >= MAX_LEVEL)) {
+  if (sel.some((e) => e.kind === "face" && e.level >= maxLevel("face"))) {
     add("💥 Detonate", "take them with you", () =>
-      issue({ c: "detonate", ids: sel.filter((e) => e.kind === "face" && e.level >= MAX_LEVEL).map((e) => e.id) }));
+      issue({ c: "detonate", ids: sel.filter((e) => e.kind === "face" && e.level >= maxLevel("face")).map((e) => e.id) }));
   }
   if (sel.some((e) => !STATS[e.kind].building)) {
     add("Attack [A]", "move & engage", () => { attackMoveArmed = !attackMoveArmed; placing = null; dungArmed = false; });
@@ -558,9 +558,15 @@ function syncCardMeta() {
     if (e.cargo) parts.push(`carrying ${e.cargo}${RES_EMOJI[e.cargoRes ?? "bits"]}`);
     if (e.kind === "cloud" && e.complete) parts.push(`intake ${e.stockBits}💾 ${e.stockPixels}🎨 · ${e.stockSlop}🤖 awaiting pickup`);
     if (e.kind === "feed" && e.complete) parts.push(`${e.stockSlop}🤖 in stock`);
-    if (e.kind === "face") {
-      parts.push(e.level >= MAX_LEVEL ? "fully radicalised — detonates on death"
-        : `mood ${e.level + 1}/${MAX_LEVEL + 1}`);
+    if (canLevel(e.kind)) {
+      const top = maxLevel(e.kind);
+      if (e.kind === "face") {
+        parts.push(e.level >= top ? "fully radicalised — detonates on death"
+          : `mood ${e.level + 1}/${top + 1}`);
+        parts.push(unitRange(e.kind, e.level) > 60 * FP ? "ranged" : "melee");
+      } else {
+        parts.push(`stage ${e.level + 1}/${top + 1}`);
+      }
     }
     if (e.queue.length) parts.push(`queue ${e.queue.length} · ${Math.ceil(e.queueLeft / 20)}s`);
     if (!e.complete) parts.push("under construction");
