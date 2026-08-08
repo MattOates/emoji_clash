@@ -45,11 +45,17 @@
         word-break: break-all;
       }
       .hidden { display: none !important; }
+      /* The blurb is redundant once you are inside a sub-screen. */
+      .card.deep .intro { display: none; }
 
+      /* Scrollable, because the how-it-works screen is taller than a laptop
+         viewport and an unreachable "Got it" button is worse than no screen. */
       #menu {
-        position: fixed; inset: 0; display: grid; place-items: center;
+        position: fixed; inset: 0; overflow-y: auto; display: flex;
+        justify-content: center; align-items: flex-start; padding: 28px 0;
         background: radial-gradient(ellipse at 50% 35%, #0d1a26, #04070b 70%); z-index: 40;
       }
+      .card { margin: auto; }
       .card {
         width: min(560px, 92vw); background: var(--panel); border: 1px solid var(--line);
         border-radius: 16px; padding: 26px 28px; box-shadow: 0 30px 90px rgba(0, 0, 0, 0.6);
@@ -61,6 +67,28 @@
       .ledger { display: grid; gap: 7px; margin-bottom: 18px; font-size: 12px; line-height: 1.55; color: var(--dim); }
       .ledger div { border-left: 2px solid var(--line); padding-left: 10px; }
       .ledger b { color: var(--ink); font-weight: 600; }
+      /* Economy flow: one row per hop, so it reflows to a single column on a
+         phone without the arrows ending up pointing at nothing. */
+      .flow { display: grid; gap: 9px; margin: 4px 0 16px; }
+      .hop { display: flex; align-items: stretch; gap: 9px; flex-wrap: wrap; }
+      .node {
+        flex: 1 1 130px; min-width: 118px; background: rgba(9,15,23,.7);
+        border: 1px solid var(--line); border-radius: 10px; padding: 9px 11px;
+      }
+      .node b { display: block; font-size: 21px; line-height: 1.25; }
+      .node span { display: block; font-size: 12px; color: var(--ink); }
+      .node small { display: block; font-size: 10.5px; color: var(--dim); margin-top: 1px; }
+      .node.stack { display: grid; gap: 5px; align-content: center; }
+      .node.stack div { font-size: 12px; }
+      .node.stack em { font-style: normal; font-size: 17px; margin-right: 5px; }
+      .arrow {
+        flex: 0 0 auto; display: grid; place-items: center; padding: 0 3px;
+        color: var(--dim); font-size: 10.5px; text-align: center; align-self: center;
+      }
+      .arrow b { display: block; font-size: 17px; color: var(--accent); line-height: 1 }
+      .arrow i { font-style: normal; white-space: nowrap }
+      .note { font-size: 12px; color: var(--dim); line-height: 1.6; margin-bottom: 14px }
+      .note b { color: var(--ink) }
       .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
       .row.stack { flex-direction: column; align-items: stretch; }
       .step { color: var(--dim); font-size: 11.5px; margin: 14px 0 6px; letter-spacing: 0.08em; text-transform: uppercase; }
@@ -143,12 +171,12 @@
     <div id="menu">
       <div class="card">
         <h1>EMOJI <span>CLASH</span></h1>
-        <div class="sub">
+        <div class="sub intro">
           A peer-to-peer real-time strategy game rendered entirely in system emoji.
           Two browsers talk directly over WebRTC — no game server, no lobby, no backend.
           Swap one code with your opponent and the match runs entirely between you.
         </div>
-        <div class="ledger">
+        <div class="ledger intro">
           <div><b>🧑‍🔧 Engineers</b> mine 💾 bits into a 🗄️ Drive and 🎨 pixels into a 🖼️ Gallery.
             Bits are everywhere; pixels are scarce and slow.</div>
           <div><b>☁️ A Cloud</b> fuses 2 💾 + 1 🎨 into 🤖 slop — put an Engineer on it and they
@@ -161,6 +189,59 @@
           <button class="primary" id="btnPractice">Practice vs 🤖</button>
           <button id="btnHost">Host a match</button>
           <button id="btnJoin">Join a match</button>
+          <button id="btnHow">How it works</button>
+        </div>
+
+        <div id="howPane" class="hidden">
+          <div class="note">
+            <b>Nothing moves on its own.</b> 🧑‍🔧 Engineers carry every load, and every
+            arrow below is a walk somebody has to make. Cut a line and everything
+            downstream of it stops.
+          </div>
+
+          <div class="flow">
+            <div class="hop">
+              <div class="node"><b>💾</b><span>Bit Cache</span><small>plentiful, quick to mine</small></div>
+              <div class="arrow"><b>→</b><i>🧑‍🔧 mines</i></div>
+              <div class="node"><b>🗄️</b><span>Drive</span><small>stores your 💾 bits</small></div>
+            </div>
+            <div class="hop">
+              <div class="node"><b>🎨</b><span>Pixel Seam</span><small>5× rarer, far slower</small></div>
+              <div class="arrow"><b>→</b><i>🧑‍🔧 mines</i></div>
+              <div class="node"><b>🖼️</b><span>Gallery</span><small>stores your 🎨 pixels</small></div>
+            </div>
+            <div class="hop">
+              <div class="node stack">
+                <div><em>🗄️</em>Drive</div>
+                <div><em>🖼️</em>Gallery</div>
+              </div>
+              <div class="arrow"><b>→</b><i>🧑‍🔧 hauls<br />2💾 + 1🎨</i></div>
+              <div class="node"><b>☁️</b><span>Cloud</span><small>fuses them into 🤖 slop</small></div>
+            </div>
+            <div class="hop">
+              <div class="node"><b>☁️</b><span>Cloud</span><small>🤖 waits here for pickup</small></div>
+              <div class="arrow"><b>→</b><i>🧑‍🔧 hauls 🤖</i></div>
+              <div class="node stack">
+                <div><em>🏢</em>Datacenter <small>banks 🤖 to spend</small></div>
+                <div><em>📱</em>Social Feed <small>spends 🤖 to level units</small></div>
+              </div>
+            </div>
+            <div class="hop">
+              <div class="node"><b>⌨️</b><span>Keyboard</span><small>types out your army</small></div>
+              <div class="arrow"><b>→</b><i>costs 💾 🎨</i></div>
+              <div class="node"><b>🙂 🙈</b><span>Smileys &amp; Monkeys</span><small>📱 sours 🙂, and toughens 🙈</small></div>
+            </div>
+          </div>
+
+          <div class="note">
+            🙂 starts as a tough, harmless meat shield and gets frailer and deadlier at
+            the Feed, switching to ranged at 🙁 — so a levelled army sorts itself into a
+            front and a back line. 😡 explodes when it dies.
+          </div>
+
+          <div class="row">
+            <button class="primary" id="howBack">Got it</button>
+          </div>
         </div>
 
         <div id="hostPane" class="hidden">

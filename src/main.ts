@@ -19,11 +19,23 @@ function setStatus(text: string, cls: "" | "err" | "ok" = "") {
   status.className = "status " + cls;
 }
 
-function showPane(which: "menu" | "host" | "join") {
+function showPane(which: "menu" | "host" | "join" | "how") {
   $("modeButtons").classList.toggle("hidden", which !== "menu");
   $("hostPane").classList.toggle("hidden", which !== "host");
   $("joinPane").classList.toggle("hidden", which !== "join");
+  $("howPane").classList.toggle("hidden", which !== "how");
+  document.querySelector(".card")!.classList.toggle("deep", which !== "menu");
   setStatus("");
+}
+
+$("btnHow").onclick = () => showPane("how");
+$("howBack").onclick = () => showPane("menu");
+
+// Shown unprompted the first time, because the two-stage haul is the one thing
+// nobody would guess from the board.
+if (!localStorage.getItem("ec.seenHow") && !location.hash.startsWith("#r=")) {
+  showPane("how");
+  localStorage.setItem("ec.seenHow", "1");
 }
 
 const roomLink = (code: string) =>
