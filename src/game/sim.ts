@@ -64,7 +64,7 @@ function makeEntity(w: World, kind: Kind, owner: number, x: number, y: number, c
     id: w.nextId++, kind, owner, x, y,
     hp: complete ? unitHp(kind, 0) : Math.max(1, (s.hp / 10) | 0),
     maxHp: unitHp(kind, 0),
-    order: { ...IDLE }, cooldown: 0, cargo: 0, cargoRes: null, amount: 0, progress: 0,
+    order: { ...IDLE }, cooldown: 0, cargo: 0, cargoRes: null, amount: 0, progress: 0, dungCd: 0,
     complete, queue: [], queueLeft: 0,
     rallyX: x, rallyY: y + 62 * FP,
     level: 0, stockBits: 0, stockPixels: 0, stockSlop: 0,
@@ -468,7 +468,11 @@ function stepBuilding(w: World, b: Entity) {
 function stepUnit(w: World, e: Entity) {
   const o = e.order;
   const spd = speedOf(w, e);
-  if (e.kind === "monkey" && e.progress > 0) e.progress--; // dung cooldown
+  // Its own counter, deliberately. Sharing `progress` with the Feed's enrolment
+  // timer meant the two fought each tick: the cooldown decremented what
+  // enrolment had just incremented, so a Monkey never levelled, while the
+  // "not started yet" test kept seeing zero and charged slop every single tick.
+  if (e.kind === "monkey" && e.dungCd > 0) e.dungCd--;
 
   switch (o.kind) {
     case "idle":
@@ -664,10 +668,10 @@ function stepUnit(w: World, e: Entity) {
     case "dung": {
       if (e.kind !== "monkey") { e.order = { ...IDLE }; return; }
       if (moveToward(w, e, o.x, o.y, spd, 10 * FP) || giveUp(e, o.x, o.y)) {
-        if (e.progress <= 0) {
+        if (e.dungCd <= 0) {
           const d = makeEntity(w, "dung", e.owner, e.x, e.y);
           d.hp = STATS.dung.hp;
-          e.progress = DUNG_COOLDOWN;
+          e.dungCd = DUNG_COOLDOWN;
           w.events.push({ x: d.x, y: d.y, kind: "float", text: "💩" });
           refreshMuck(w);
         }
@@ -1037,7 +1041,7 @@ export function checksum(w: World): number {
   for (const e of w.entities) {
     mix(e.id); mix(e.x); mix(e.y); mix(e.hp); mix(e.cargo); mix(e.level);
     mix(e.order.kind.length * 31 + e.order.target); mix(e.queue.length);
-    mix(e.stockBits * 7 + e.stockPixels * 13 + e.stockSlop * 29);
+    mix(e.stockBits * 7 + e.stockPixels * 13 + e.stockSlop * 29); mix(e.progress * 3 + e.dungCd);
   }
   for (const p of w.players) { mix(p.bits); mix(p.pixels); mix(p.slop); mix(p.supply); }
   return h >>> 0;

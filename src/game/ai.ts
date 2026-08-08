@@ -121,7 +121,7 @@ export function aiCommands(w: World, me: number): Command[] {
   }
 
   // Monkeys foul whatever the enemy is walking over most.
-  const monkeys = mine.filter((e) => e.kind === "monkey" && e.order.kind === "idle" && e.progress <= 0);
+  const monkeys = mine.filter((e) => e.kind === "monkey" && e.order.kind === "idle" && e.dungCd <= 0);
   if (monkeys.length && foes.length) {
     const depot = foes.find((f) => f.kind === "drive" || f.kind === "gallery");
     if (depot) {

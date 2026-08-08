@@ -232,6 +232,7 @@ export interface Entity {
   cargoRes: Res | null; // what is being carried
   amount: number; // remaining deposit, for nodes
   progress: number; // construction / gathering / enrolment ticks
+  dungCd: number; // Monkey's own cooldown; must not share `progress`
   complete: boolean;
   queue: Kind[]; // production queue (structures)
   queueLeft: number; // ticks left on head of queue
